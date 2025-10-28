@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
-from typing import Optional, List # Ajout de List
+from typing import Optional, List
 from datetime import datetime, timezone
 import os
 import uuid
@@ -119,10 +119,8 @@ class RecurringTransactionUpdate(BaseModel):
     frequency: Optional[str] = None
     day_of_month: Optional[int] = None
 
-# --- NOUVEAU MODÈLE POUR L'IMPORT EN MASSE ---
 class TransactionBulk(BaseModel):
     transactions: List[TransactionCreate]
-# --- FIN DU NOUVEAU MODÈLE ---
 
 # Default Categories
 DEFAULT_CATEGORIES = [
@@ -312,7 +310,6 @@ async def create_transaction(transaction: TransactionCreate):
     await transactions_collection.insert_one(new_transaction_data.copy())
     return new_transaction_data
 
-# --- NOUVEL ENDPOINT POUR L'IMPORT EN MASSE ---
 @app.post("/api/transactions/bulk")
 async def create_bulk_transactions(data: TransactionBulk):
     new_transactions_data = []
@@ -338,7 +335,6 @@ async def create_bulk_transactions(data: TransactionBulk):
         return {"message": f"{len(new_transactions_data)} transactions imported successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred during bulk insert: {e}")
-# --- FIN DU NOUVEL ENDPOINT ---
 
 @app.put("/api/transactions/{transaction_id}")
 async def update_transaction(transaction_id: str, transaction: TransactionUpdate):
@@ -449,7 +445,6 @@ async def generate_recurring_transactions():
     
     for recurring in recurring_list:
         if recurring["frequency"] == "Mensuel" and current_day >= recurring["day_of_month"]:
-            # Check if already generated for this month
             existing = await transactions_collection.find_one({
                 "description": recurring.get("description"),
                 "amount": recurring["amount"],
@@ -477,31 +472,42 @@ async def generate_recurring_transactions():
     
     return {"message": f"{generated_count} transactions generated", "count": generated_count}
 
-# Dashboard Statistics
+# --- ENDPOINT DU TABLEAU DE BORD MODIFIÉ ---
 @app.get("/api/dashboard/stats")
-async def get_dashboard_stats():
+async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] = None):
     now = datetime.now(timezone.utc)
-    current_month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
     
-    if now.month == 12:
-        next_month_start = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+    target_year = year if year else now.year
+    display_period = str(target_year)
+    
+    if month:
+        # Calcule les stats pour un mois spécifique
+        target_month = month
+        start_date = datetime(target_year, target_month, 1, tzinfo=timezone.utc)
+        if target_month == 12:
+            end_date = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end_date = datetime(target_year, target_month + 1, 1, tzinfo=timezone.utc)
+        display_period = start_date.strftime("%B %Y") # ex: "Octobre 2025"
     else:
-        next_month_start = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
-    
-    # Current month transactions
-    current_month_transactions = await transactions_collection.find({
-        "date": {"$gte": current_month_start, "$lt": next_month_start}
+        # Calcule les stats pour l'année entière
+        start_date = datetime(target_year, 1, 1, tzinfo=timezone.utc)
+        end_date = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
+
+    # 1. Calculer les cartes de stats (Revenus, Dépenses, Épargne)
+    period_transactions = await transactions_collection.find({
+        "date": {"$gte": start_date, "$lt": end_date}
     }).to_list(None)
     
-    revenus = sum(t["amount"] for t in current_month_transactions if t["type"] == "Revenu")
-    depenses = sum(t["amount"] for t in current_month_transactions if t["type"] == "Dépense")
+    revenus = sum(t["amount"] for t in period_transactions if t["type"] == "Revenu")
+    depenses = sum(t["amount"] for t in period_transactions if t["type"] == "Dépense")
     epargne = revenus - depenses
     
-    # --- Code pour le CAMEMBERT ---
+    # 2. Calculer le graphique Camembert (Répartition des dépenses)
     pipeline = [
         {
             "$match": {
-                "date": {"$gte": current_month_start, "$lt": next_month_start},
+                "date": {"$gte": start_date, "$lt": end_date},
                 "type": "Dépense"
             }
         },
@@ -532,45 +538,41 @@ async def get_dashboard_stats():
     ]
     expense_breakdown_cursor = transactions_collection.aggregate(pipeline)
     expense_breakdown = await expense_breakdown_cursor.to_list(None)
-    # --- FIN DU CODE CAMEMBERT ---
 
-    # Last 12 months data
+    # 3. Calculer le graphique en Barres (Toujours les 12 mois de l'année cible)
     monthly_data = []
+    month_names = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
+    
     for i in range(12):
-        if now.month - i > 0:
-            month = now.month - i
-            year = now.year
+        month_num = i + 1
+        month_start = datetime(target_year, month_num, 1, tzinfo=timezone.utc)
+        if month_num == 12:
+            month_end = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
         else:
-            month = 12 + (now.month - i)
-            year = now.year - 1
-        
-        month_start = datetime(year, month, 1, tzinfo=timezone.utc)
-        if month == 12:
-            month_end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            month_end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+            month_end = datetime(target_year, month_num + 1, 1, tzinfo=timezone.utc)
         
         month_transactions = await transactions_collection.find({
             "date": {"$gte": month_start, "$lt": month_end}
         }).to_list(None)
         
-        month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Dépense")
+        month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Revenu")
         month_depenses = sum(t["amount"] for t in month_transactions if t["type"] == "Dépense")
         
-        month_names = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
-        monthly_data.insert(0, {
-            "month": month_names[month - 1],
+        monthly_data.append({
+            "month": month_names[i],
             "revenus": month_revenus,
             "depenses": month_depenses
         })
     
     return {
-        "revenus_ce_mois": revenus,
-        "depenses_ce_mois": depenses,
-        "epargne_du_mois": epargne,
+        "revenus_total": revenus,
+        "depenses_total": depenses,
+        "epargne_total": epargne,
         "monthly_data": monthly_data,
-        "expense_breakdown": expense_breakdown
+        "expense_breakdown": expense_breakdown,
+        "display_period": display_period # Envoie la période d'affichage
     }
+# --- FIN DE L'ENDPOINT MODIFIÉ ---
 
 if __name__ == "__main__":
     import uvicorn

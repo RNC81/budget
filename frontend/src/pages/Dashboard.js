@@ -10,19 +10,48 @@ import TransactionModal from '../components/TransactionModal';
 // Couleurs pour le graphique camembert
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#E36414', '#9A348E'];
 
+const years = [2025, 2024, 2023]; // Tu peux ajouter plus d'années ici
+const months = [
+  { value: 'all', name: 'Toute l\'année' },
+  { value: 1, name: 'Janvier' },
+  { value: 2, name: 'Février' },
+  { value: 3, name: 'Mars' },
+  { value: 4, name: 'Avril' },
+  { value: 5, name: 'Mai' },
+  { value: 6, name: 'Juin' },
+  { value: 7, name: 'Juillet' },
+  { value: 8, name: 'Août' },
+  { value: 9, name: 'Septembre' },
+  { value: 10, name: 'Octobre' },
+  { value: 11, name: 'Novembre' },
+  { value: 12, name: 'Décembre' },
+];
+
 function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // --- NOUVEAUX ÉTATS POUR LES FILTRES ---
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1); // +1 car les mois JS sont 0-11
+  // ---
+
   useEffect(() => {
     fetchStats();
-  }, [refreshKey]);
+    // Re-déclenche le fetch si la clé, l'année ou le mois changent
+  }, [refreshKey, selectedYear, selectedMonth]);
 
   const fetchStats = async () => {
+    setLoading(true);
     try {
-      const response = await api.get('/api/dashboard/stats');
+      const params = { year: selectedYear };
+      if (selectedMonth !== 'all') {
+        params.month = selectedMonth;
+      }
+      
+      const response = await api.get('/api/dashboard/stats', { params });
       setStats(response.data);
     } catch (error) {
       console.error('Error fetching stats:', error);
@@ -44,8 +73,9 @@ function Dashboard() {
     );
   }
 
-  const epargnePositive = stats?.epargne_du_mois >= 0;
+  const epargnePositive = stats?.epargne_total >= 0;
   const hasExpenseData = stats?.expense_breakdown && stats.expense_breakdown.length > 0;
+  const displayPeriod = stats?.display_period || 'Mois en cours';
 
   return (
     <div className="space-y-8">
@@ -53,7 +83,9 @@ function Dashboard() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Tableau de Bord</h1>
-          <p className="text-gray-600 mt-1">Vue d'ensemble de vos finances ce mois-ci</p>
+          <p className="text-gray-600 mt-1">
+            Vue d'ensemble de vos finances pour : <span className="font-semibold text-primary-700">{displayPeriod}</span>
+          </p>
         </div>
         <button
           onClick={() => setShowModal(true)}
@@ -64,15 +96,49 @@ function Dashboard() {
         </button>
       </div>
 
+      {/* --- NOUVEAUX FILTRES --- */}
+      <div className="bg-white rounded-2xl shadow-lg p-4 border border-gray-100">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div>
+            <label htmlFor="year-select" className="block text-sm font-medium text-gray-700 mb-1">Année</label>
+            <select
+              id="year-select"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+              className="w-full sm:w-auto px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+            >
+              {years.map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="month-select" className="block text-sm font-medium text-gray-700 mb-1">Mois</label>
+            <select
+              id="month-select"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
+              className="w-full sm:w-auto px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+            >
+              {months.map(month => (
+                <option key={month.value} value={month.value}>{month.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+      {/* --- FIN NOUVEAUX FILTRES --- */}
+
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Revenus */}
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Revenus ce mois-ci</p>
+              <p className="text-sm font-medium text-gray-600 mb-1">Total Revenus</p>
               <p className="text-3xl font-bold text-gray-900">
-                {stats?.revenus_ce_mois?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                {stats?.revenus_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
               </p>
             </div>
             <div className="bg-success-100 rounded-full p-3">
@@ -85,9 +151,9 @@ function Dashboard() {
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Dépenses ce mois-ci</p>
+              <p className="text-sm font-medium text-gray-600 mb-1">Total Dépenses</p>
               <p className="text-3xl font-bold text-gray-900">
-                {stats?.depenses_ce_mois?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                {stats?.depenses_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
               </p>
             </div>
             <div className="bg-red-100 rounded-full p-3">
@@ -102,9 +168,9 @@ function Dashboard() {
         }`}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Épargne du mois</p>
+              <p className="text-sm font-medium text-gray-600 mb-1">Épargne</p>
               <p className={`text-3xl font-bold ${epargnePositive ? 'text-success-600' : 'text-red-600'}`}>
-                {stats?.epargne_du_mois?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                {stats?.epargne_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
               </p>
             </div>
             <div className={`${epargnePositive ? 'bg-success-100' : 'bg-red-100'} rounded-full p-3`}>
@@ -120,9 +186,9 @@ function Dashboard() {
       {/* Conteneur pour les graphiques */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
-        {/* Graphique Barres (existant) */}
+        {/* Graphique Barres (Titre mis à jour) */}
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-          <h2 className="text-xl font-bold text-gray-900 mb-6">Revenus vs Dépenses (12 derniers mois)</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-6">Revenus vs Dépenses ({selectedYear})</h2>
           <div className="h-96">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={stats?.monthly_data || []}>
@@ -146,9 +212,9 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* NOUVEAU Graphique Camembert */}
+        {/* Graphique Camembert (Titre mis à jour) */}
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-          <h2 className="text-xl font-bold text-gray-900 mb-6">Répartition des Dépenses (Mois en cours)</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-6">Répartition des Dépenses ({displayPeriod})</h2>
           <div className="h-96">
             {hasExpenseData ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -176,7 +242,7 @@ function Dashboard() {
               </ResponsiveContainer>
             ) : (
               <div className="flex items-center justify-center h-full">
-                <p className="text-gray-500">Aucune dépense enregistrée pour ce mois.</p>
+                <p className="text-gray-500">Aucune dépense enregistrée pour cette période.</p>
               </div>
             )}
           </div>
