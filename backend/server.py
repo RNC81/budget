@@ -15,9 +15,10 @@ app = FastAPI()
 # Spécifier explicitement les origines autorisées pour permettre l'envoi de credentials (cookies)
 # allow_origins=["*"] n'est pas compatible avec allow_credentials=True
 origins = [
-    "https://budget-frontend.onrender.com",
+    "https://budget-1-fbg6.onrender.com",
     "http://localhost:3000"  # Pour les tests locaux
-]
+    "https://smart-wallet-66.preview.emergentagent.com/login"
+    ]
 
 app.add_middleware(
     CORSMiddleware,
