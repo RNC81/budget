@@ -60,7 +60,9 @@ function ImportTab() {
     setSuccess('');
 
     Papa.parse(file, {
-      delimiter: ';', // Spécifie le point-virgule comme délimiteur
+      // --- MODIFICATION ICI ---
+      // On enlève "delimiter: ';'" pour laisser PapaParse auto-détecter
+      // s'il s'agit d'une virgule ou d'un point-virgule.
       skipEmptyLines: true,
       complete: async (results) => {
         try {
@@ -178,6 +180,7 @@ function processCSV(data, appCategories, year) {
   const transactions = [];
   
   // 1. Trouver la ligne d'en-tête des mois (de manière plus robuste)
+  // On cherche une ligne qui contient à la fois "Janvier" et "Décembre" (après nettoyage)
   const headerRowIndex = data.findIndex(row => 
     row.some(cell => (cell || '').trim() === 'Janvier') && 
     row.some(cell => (cell || '').trim() === 'Décembre')
@@ -186,6 +189,7 @@ function processCSV(data, appCategories, year) {
   if (headerRowIndex === -1) {
     throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
   }
+  
   const headerRow = data[headerRowIndex].map(cell => (cell || '').trim());
   
   // 2. Trouver la section des Revenus (en se basant sur "Salaire" ou "Total des revenus")
