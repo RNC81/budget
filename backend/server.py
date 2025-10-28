@@ -304,7 +304,7 @@ async def create_transaction(transaction: TransactionCreate):
         "subcategory_id": transaction.subcategory_id,
         "created_at": datetime.now(timezone.utc)
     }
-    await transactions_collection.insert_one(new_transaction)
+    await transactions_collection.insert_one(new_transaction.copy())
     return new_transaction
 
 @app.put("/api/transactions/{transaction_id}")
