@@ -11,7 +11,7 @@ app = FastAPI()
 
 # CORS Configuration
 origins = [
-    "https://budget-frontend.onrender.com",
+    "https://budget-1-fbg6.onrender.com",
     "http://localhost:3000"
 ]
 
