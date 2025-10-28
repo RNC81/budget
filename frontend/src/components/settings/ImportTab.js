@@ -1,35 +1,43 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api';
-import { Upload, Loader, AlertCircle } from 'lucide-react';
+import { Upload, Loader, AlertCircle, CheckCircle } from 'lucide-react';
 import Papa from 'papaparse';
 
-// On garde cette logique au cas où, mais elle ne sera pas utilisée pour l'instant
+// Fait correspondre les mois du CSV aux numéros (base 0 pour JS Date)
+// Gère "Août" (2024) et "Aoūt" (2025)
 const monthMap = {
   'janvier': 0, 'février': 1, 'mars': 2, 'avril': 3, 'mai': 4, 'juin': 5,
   'juillet': 6, 'août': 7, 'aoūt': 7, 'septembre': 8, 'octobre': 9, 'novembre': 10, 'décembre': 11
 };
+
+// Fonction pour nettoyer les noms (utilisée pour les mois et les catégories)
 const normalizeString = (str) => (str || '').trim().toLowerCase();
-// Fin de la logique non utilisée
 
 function ImportTab() {
   const [file, setFile] = useState(null);
   const [year, setYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
-  // --- NOUVEAU : État pour afficher les données de débogage ---
-  const [csvDebugData, setCsvDebugData] = useState(null);
-  // ---
-  
-  const [delimiter, setDelimiter] = useState(','); // Par défaut sur ',' pour ton nouvel export
+  const [success, setSuccess] = useState('');
+  const [categories, setCategories] = useState([]);
 
-  // On n'a plus besoin de charger les catégories pour ce test
-  // useEffect(() => { ... }, []);
+  // Charge les catégories de l'application pour faire la correspondance
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const response = await api.get('/api/categories');
+        setCategories(response.data);
+      } catch (err) {
+        setError('Impossible de charger les catégories. Veuillez actualiser.');
+      }
+    };
+    fetchCategories();
+  }, []);
 
   const handleFileChange = (e) => {
     setFile(e.target.files[0]);
     setError('');
-    setCsvDebugData(null); // Réinitialise le débogage
+    setSuccess('');
   };
 
   const handleYearChange = (e) => {
@@ -41,38 +49,69 @@ function ImportTab() {
       setError('Veuillez sélectionner un fichier CSV.');
       return;
     }
-    
+    if (!year || year.length !== 4) {
+      setError('Veuillez entrer une année valide (ex: 2024).');
+      return;
+    }
+    if (categories.length === 0) {
+      setError('Les catégories ne sont pas encore chargées. Réessayez dans un instant.');
+      return;
+    }
+
     setLoading(true);
     setError('');
-    setCsvDebugData(null);
+    setSuccess('');
 
-    // --- MODIFICATION DE LA LOGIQUE DE PARSING ---
     Papa.parse(file, {
-      delimiter: delimiter, // Utilise le délimiteur choisi
+      // --- LES CORRECTIONS SONT ICI ---
+      delimiter: ";", // Force le point-virgule
+      encoding: "ISO-8859-1", // Force la lecture des accents type "Excel Français"
       skipEmptyLines: true,
-      // Pas d'encodage spécifié, UTF-8 par défaut
+      // ---
       complete: async (results) => {
-        setLoading(false);
-        // Au lieu de traiter, on AFFICHE les 10 premières lignes
-        const first10Rows = results.data.slice(0, 10);
-        setCsvDebugData(JSON.stringify(first10Rows, null, 2));
+        try {
+          const transactionsToUpload = processCSV(results.data, categories, parseInt(year));
+          
+          if (transactionsToUpload.length === 0) {
+            setError('Aucune transaction valide trouvée dans le fichier. Vérifiez le format.');
+            setLoading(false);
+            return;
+          }
+
+          // Envoie les transactions au backend
+          const response = await api.post('/api/transactions/bulk', {
+            transactions: transactionsToUpload,
+          });
+
+          setSuccess(response.data.message || 'Importation réussie !');
+          setFile(null);
+        } catch (err) {
+          setError(err.message || 'Une erreur est survenue lors du traitement ou de l\'envoi.');
+        } finally {
+          setLoading(false);
+        }
       },
       error: (err) => {
         setError(`Erreur lors de la lecture du fichier : ${err.message}`);
         setLoading(false);
       },
     });
-    // --- FIN DE LA MODIFICATION ---
   };
 
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold text-gray-900">Importer depuis un CSV (Mode Débogage)</h3>
+      <h3 className="text-lg font-semibold text-gray-900">Importer depuis un CSV</h3>
       
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start space-x-3">
           <AlertCircle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
           <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+      {success && (
+        <div className="bg-success-50 border border-success-200 rounded-lg p-4 flex items-start space-x-3">
+          <CheckCircle className="h-5 w-5 text-success-600 mt-0.5 flex-shrink-0" />
+          <p className="text-sm text-success-600">{success}</p>
         </div>
       )}
 
@@ -90,33 +129,7 @@ function ImportTab() {
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Séparateur du fichier CSV
-          </label>
-          <div className="flex gap-6">
-            <label className="flex items-center">
-              <input 
-                type="radio" 
-                value="," 
-                checked={delimiter === ','} 
-                onChange={() => setDelimiter(',')}
-                className="focus:ring-primary-500 h-4 w-4 text-primary-600 border-gray-300"
-              />
-              <span className="ml-2 text-sm text-gray-700">Virgule (,) (Pour UTF-8)</span>
-            </label>
-            <label className="flex items-center">
-              <input 
-                type="radio" 
-                value=";" 
-                checked={delimiter === ';'} 
-                onChange={() => setDelimiter(';')}
-                className="focus:ring-primary-500 h-4 w-4 text-primary-600 border-gray-300"
-              />
-              <span className="ml-2 text-sm text-gray-700">Point-virgule (;) (Pour ISO)</span>
-            </label>
-          </div>
-        </div>
+        {/* J'ai supprimé le choix du délimiteur, ce n'est plus la peine */}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -145,47 +158,59 @@ function ImportTab() {
           ) : (
             <Upload className="h-5 w-5" />
           )}
-          <span>{loading ? 'Analyse...' : 'Lancer l\'analyse'}</span>
+          <span>{loading ? 'Traitement...' : 'Lancer l\'importation'}</span>
         </button>
       </div>
       
-      {/* --- NOUVEAU BLOC DE DÉBOGAGE --- */}
-      {csvDebugData && (
-        <div className="space-y-2">
-          <h4 className="font-semibold text-gray-800">Données lues depuis le CSV (10 premières lignes) :</h4>
-          <pre className="bg-gray-900 text-white p-4 rounded-lg overflow-x-auto text-xs">
-            {csvDebugData}
-          </pre>
-        </div>
-      )}
-      {/* --- FIN DU BLOC --- */}
+      <div className="bg-gray-50 p-4 rounded-lg border">
+        <h4 className="font-semibold text-gray-800">Instructions :</h4>
+        <ul className="list-disc list-inside text-sm text-gray-600 mt-2 space-y-1">
+          <li>Le script s'attend à un fichier CSV avec **point-virgule (;) comme séparateur**.</li>
+          <li>L'année doit être correctement renseignée.</li>
+          <li>Les noms des catégories dans le CSV (colonne B) doivent **exactement** correspondre aux noms de vos catégories dans l'application (pense aux espaces ou aux `/` !).</li>
+          <li>Les lignes "Total" et les lignes vides seront ignorées.</li>
+        </ul>
+      </div>
     </div>
   );
 }
 
-// La fonction processCSV n'est pas utilisée dans cette version de débogage,
-// mais on la garde pour plus tard.
+/**
+ * Traite les données parsées du CSV pour les transformer en transactions
+ * @param {Array} data - Données de PapaParse (Array d'Arrays)
+ * @param {Array} appCategories - Liste des catégories de l'app (venant de /api/categories)
+ * @param {number} year - L'année sélectionnée par l'utilisateur
+ * @returns {Array} - Une liste d'objets TransactionCreate
+ */
 function processCSV(data, appCategories, year) {
   const transactions = [];
   
-  // 1. Trouver la ligne d'en-tête des mois (de manière plus robuste)
-  const headerRowIndex = data.findIndex(row => 
-    row.some(cell => normalizeString(cell) === 'janvier') && 
-    row.some(cell => normalizeString(cell) === 'décembre')
-  );
-  
+  // --- LOGIQUE DE DÉTECTION D'EN-TÊTE AMÉLIORÉE ---
+  let headerRowIndex = -1;
+  let headerRow = [];
+  const monthIndexes = {}; // Va stocker { 0: 2, 1: 3, ... } (moisJS: indexColonne)
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i].map(normalizeString);
+    if (row.includes('janvier') && row.includes('décembre')) {
+      headerRowIndex = i;
+      headerRow = row;
+      // On mappe les index de colonnes pour chaque mois
+      for (let j = 0; j < row.length; j++) {
+        const monthJS = monthMap[row[j]];
+        if (monthJS !== undefined) {
+          monthIndexes[monthJS] = j; // ex: monthIndexes[0] = 2 (colonne 'Janvier' est à l'index 2)
+        }
+      }
+      break;
+    }
+  }
+
   if (headerRowIndex === -1) {
     throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
   }
-  
-  const headerRow = data[headerRowIndex].map(cell => normalizeString(cell));
-  const monthIndexes = {};
-  for (let j = 0; j < headerRow.length; j++) {
-    const monthJS = monthMap[headerRow[j]];
-    if (monthJS !== undefined) {
-      monthIndexes[monthJS] = j;
-    }
-  }
+  // --- FIN DE LA LOGIQUE D'EN-TÊTE ---
+
 
   // 2. Trouver la section des Revenus (en se basant sur "Salaire" ou "Total des revenus")
   const revenueStartIndex = data.findIndex(row => normalizeString(row[1]) === 'salaire');
@@ -231,22 +256,27 @@ function processCSV(data, appCategories, year) {
 
     // 6. Parcourir les 12 mois
     for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
+      // Trouve la colonne correspondante (ex: colonne 2 pour mois 0)
       const colIndex = monthIndexes[monthIndex];
-      if (colIndex === undefined) continue;
+      if (colIndex === undefined) continue; // Mois non trouvé dans l'en-tête ?
 
+      // --- Logique de nettoyage des montants améliorée ---
+      // Enlève "€", enlève les espaces (ex: "1 677,01 €")
       const amountStr = (row[colIndex] || '').replace(/€/g, '').replace(/\s/g, '').trim();
+      // Remplace la virgule décimale par un point
       const amount = parseFloat(amountStr.replace(',', '.'));
 
       if (!amountStr || isNaN(amount) || amount === 0) {
         continue; // Ignore les cellules vides ou à 0
       }
       
+      // On met le 15 du mois par défaut pour éviter les pbs de fuseaux horaires
       const transactionDate = new Date(year, monthIndex, 15);
       
       transactions.push({
         date: transactionDate.toISOString(),
-        amount: Math.abs(amount), 
-        type: categoryInfo.type,
+        amount: Math.abs(amount), // Assure que le montant est positif
+        type: categoryInfo.type, // "Revenu" ou "Dépense"
         description: `Import CSV - ${row[1].trim()}`,
         category_id: categoryInfo.id,
         subcategory_id: null,
