@@ -63,15 +63,15 @@ function ImportTab() {
     setSuccess('');
 
     Papa.parse(file, {
-      delimiter: ',', // --- MODIFICATION ICI : On force la virgule ---
-      // On enlève "encoding", PapaParse utilise UTF-8 par défaut
+      delimiter: ',', // On part du principe que tu utilises des virgules
       skipEmptyLines: true,
+      // On n'spécifie pas l'encodage, PapaParse utilise UTF-8 par défaut
       complete: async (results) => {
         try {
           const transactionsToUpload = processCSV(results.data, categories, parseInt(year));
           
           if (transactionsToUpload.length === 0) {
-            setError('Aucune transaction valide trouvée dans le fichier. Vérifiez le format ou le délimiteur.');
+            setError('Aucune transaction valide trouvée dans le fichier. Vérifiez le format.');
             setLoading(false);
             return;
           }
@@ -127,11 +127,9 @@ function ImportTab() {
           />
         </div>
 
-        {/* J'ai supprimé le choix du délimiteur, on utilise la virgule par défaut */}
-
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Fichier CSV (format "Mon Budget XXXX")
+            Fichier CSV (séparateur: virgule, encodage: UTF-8)
           </label>
           <input
             type="file"
@@ -182,31 +180,35 @@ function ImportTab() {
  */
 function processCSV(data, appCategories, year) {
   const transactions = [];
+
+  // --- LOGIQUE DE DÉTECTION D'EN-TÊTE AMÉLIORÉE ---
   
-  // 1. Trouver la ligne d'en-tête des mois (de manière plus robuste)
-  // On vérifie la colonne C (index 2) et N (index 13)
-  const headerRowIndex = data.findIndex(row => 
-    normalizeString(row[2]) === 'janvier' && 
-    normalizeString(row[13]) === 'décembre'
-  );
-  
-  if (headerRowIndex === -1) {
-    // Si ça échoue, on tente une recherche plus large (au cas où il y ait des colonnes vides au début)
-    const flexibleHeaderIndex = data.findIndex(row => 
-      row.some(cell => normalizeString(cell) === 'janvier') && 
-      row.some(cell => normalizeString(cell) === 'décembre')
-    );
-    if (flexibleHeaderIndex === -1) {
-      throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
+  let headerRowIndex = -1;
+  let headerRow = [];
+  const monthIndexes = {}; // Va stocker { 0: 2, 1: 3, ... } (moisJS: indexColonne)
+
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i].map(normalizeString);
+    if (row.includes('janvier') && row.includes('décembre')) {
+      headerRowIndex = i;
+      headerRow = row;
+      // On mappe les index de colonnes pour chaque mois
+      for (let j = 0; j < row.length; j++) {
+        const monthJS = monthMap[row[j]];
+        if (monthJS !== undefined) {
+          monthIndexes[monthJS] = j;
+        }
+      }
+      break;
     }
-    // Si on a trouvé, on continue avec cet index
-    // Note : cela suppose que le reste de la logique (index 1, 2, 13) est toujours valide
-    // ce qui n'est pas idéal mais devrait marcher pour tes fichiers.
-    console.warn("Ligne d'en-tête trouvée, mais pas à la position attendue.");
   }
-  
-  const headerRow = data[headerRowIndex].map(cell => normalizeString(cell));
-  
+
+  if (headerRowIndex === -1) {
+    throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
+  }
+  // --- FIN DE LA LOGIQUE D'EN-TÊTE ---
+
+
   // 2. Trouver la section des Revenus (en se basant sur "Salaire" ou "Total des revenus")
   const revenueStartIndex = data.findIndex(row => normalizeString(row[1]) === 'salaire');
   const revenueEndIndex = data.findIndex(row => normalizeString(row[1]) === 'total des revenus');
@@ -249,13 +251,12 @@ function processCSV(data, appCategories, year) {
       continue;
     }
 
-    // 6. Parcourir les colonnes (mois) pour cette ligne
-    for (let colIndex = 2; colIndex < headerRow.length; colIndex++) {
-      const monthName = headerRow[colIndex];
-      const monthIndex = monthMap[monthName];
-      
-      if (monthIndex === undefined) continue; // Ignore les colonnes non-mois (ex: "Total")
-      
+    // 6. Parcourir les 12 mois
+    for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
+      // Trouve la colonne correspondante (ex: colonne 2 pour mois 0)
+      const colIndex = monthIndexes[monthIndex];
+      if (colIndex === undefined) continue; // Mois non trouvé dans l'en-tête ?
+
       const amountStr = (row[colIndex] || '').replace(/€/g, '').replace(/\s/g, '').trim();
       const amount = parseFloat(amountStr.replace(',', '.'));
 
