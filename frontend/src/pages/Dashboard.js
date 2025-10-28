@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell 
+} from 'recharts';
 import { TrendingUp, TrendingDown, Wallet, Plus, Loader } from 'lucide-react';
 import TransactionModal from '../components/TransactionModal';
+
+// Couleurs pour le graphique camembert
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#E36414', '#9A348E'];
 
 function Dashboard() {
   const [stats, setStats] = useState(null);
@@ -39,6 +45,7 @@ function Dashboard() {
   }
 
   const epargnePositive = stats?.epargne_du_mois >= 0;
+  const hasExpenseData = stats?.expense_breakdown && stats.expense_breakdown.length > 0;
 
   return (
     <div className="space-y-8">
@@ -110,30 +117,71 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-        <h2 className="text-xl font-bold text-gray-900 mb-6">Revenus vs Dépenses (12 derniers mois)</h2>
-        <div className="h-96">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={stats?.monthly_data || []}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey="month" stroke="#6b7280" />
-              <YAxis stroke="#6b7280" />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#fff',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '0.5rem',
-                  boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-                }}
-                formatter={(value) => value.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
-              />
-              <Legend />
-              <Bar dataKey="revenus" name="Revenus" fill="#22c55e" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="depenses" name="Dépenses" fill="#ef4444" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+      {/* Conteneur pour les graphiques */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        
+        {/* Graphique Barres (existant) */}
+        <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
+          <h2 className="text-xl font-bold text-gray-900 mb-6">Revenus vs Dépenses (12 derniers mois)</h2>
+          <div className="h-96">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stats?.monthly_data || []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="month" stroke="#6b7280" />
+                <YAxis stroke="#6b7280" />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '0.5rem',
+                    boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                  }}
+                  formatter={(value) => value.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                />
+                <Legend />
+                <Bar dataKey="revenus" name="Revenus" fill="#22c55e" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="depenses" name="Dépenses" fill="#ef4444" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
+
+        {/* NOUVEAU Graphique Camembert */}
+        <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
+          <h2 className="text-xl font-bold text-gray-900 mb-6">Répartition des Dépenses (Mois en cours)</h2>
+          <div className="h-96">
+            {hasExpenseData ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={stats.expense_breakdown}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={120}
+                    fill="#8884d8"
+                    labelLine={false}
+                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                  >
+                    {stats.expense_breakdown.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value) => [value.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }), 'Total']}
+                  />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-gray-500">Aucune dépense enregistrée pour ce mois.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
 
       {/* Transaction Modal */}

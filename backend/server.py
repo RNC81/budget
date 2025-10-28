@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, timezone
 import os
 import uuid
@@ -166,14 +166,14 @@ async def get_categories():
 @app.post("/api/categories")
 async def create_category(category: CategoryCreate):
     category_id = str(uuid.uuid4())
-    new_category = {
+    new_category_data = {
         "id": category_id,
         "name": category.name,
         "type": category.type,
         "created_at": datetime.now(timezone.utc)
     }
-    await categories_collection.insert_one(new_category)
-    return new_category
+    await categories_collection.insert_one(new_category_data.copy())
+    return new_category_data
 
 @app.put("/api/categories/{category_id}")
 async def update_category(category_id: str, category: CategoryUpdate):
@@ -186,6 +186,7 @@ async def update_category(category_id: str, category: CategoryUpdate):
         await categories_collection.update_one({"id": category_id}, {"$set": update_data})
     
     updated = await categories_collection.find_one({"id": category_id})
+    # Convert _id to str if it exists, though we return a known structure
     return {"id": updated["id"], "name": updated["name"], "type": updated["type"], "created_at": updated["created_at"]}
 
 @app.delete("/api/categories/{category_id}")
@@ -220,14 +221,14 @@ async def create_subcategory(subcategory: SubCategoryCreate):
         raise HTTPException(status_code=404, detail="Category not found")
     
     subcategory_id = str(uuid.uuid4())
-    new_subcategory = {
+    new_subcategory_data = {
         "id": subcategory_id,
         "category_id": subcategory.category_id,
         "name": subcategory.name,
         "created_at": datetime.now(timezone.utc)
     }
-    await subcategories_collection.insert_one(new_subcategory)
-    return new_subcategory
+    await subcategories_collection.insert_one(new_subcategory_data.copy())
+    return new_subcategory_data
 
 @app.put("/api/subcategories/{subcategory_id}")
 async def update_subcategory(subcategory_id: str, subcategory: SubCategoryUpdate):
@@ -294,7 +295,8 @@ async def get_transactions(
 @app.post("/api/transactions")
 async def create_transaction(transaction: TransactionCreate):
     transaction_id = str(uuid.uuid4())
-    new_transaction = {
+    # Renommée en new_transaction_data
+    new_transaction_data = {
         "id": transaction_id,
         "date": transaction.date,
         "amount": transaction.amount,
@@ -304,8 +306,11 @@ async def create_transaction(transaction: TransactionCreate):
         "subcategory_id": transaction.subcategory_id,
         "created_at": datetime.now(timezone.utc)
     }
-    await transactions_collection.insert_one(new_transaction.copy())
-    return new_transaction
+    # Insère une .copy() pour éviter que l'objet new_transaction_data ne soit muté par MongoDB
+    await transactions_collection.insert_one(new_transaction_data.copy())
+    
+    # Renvoie le dictionnaire original, qui est propre et sérialisable en JSON
+    return new_transaction_data
 
 @app.put("/api/transactions/{transaction_id}")
 async def update_transaction(transaction_id: str, transaction: TransactionUpdate):
@@ -357,7 +362,7 @@ async def get_recurring_transactions():
 @app.post("/api/recurring-transactions")
 async def create_recurring_transaction(recurring: RecurringTransactionCreate):
     recurring_id = str(uuid.uuid4())
-    new_recurring = {
+    new_recurring_data = {
         "id": recurring_id,
         "amount": recurring.amount,
         "type": recurring.type,
@@ -368,8 +373,8 @@ async def create_recurring_transaction(recurring: RecurringTransactionCreate):
         "day_of_month": recurring.day_of_month,
         "created_at": datetime.now(timezone.utc)
     }
-    await recurring_transactions_collection.insert_one(new_recurring)
-    return new_recurring
+    await recurring_transactions_collection.insert_one(new_recurring_data.copy())
+    return new_recurring_data
 
 @app.put("/api/recurring-transactions/{recurring_id}")
 async def update_recurring_transaction(recurring_id: str, recurring: RecurringTransactionUpdate):
@@ -464,6 +469,44 @@ async def get_dashboard_stats():
     depenses = sum(t["amount"] for t in current_month_transactions if t["type"] == "Dépense")
     epargne = revenus - depenses
     
+    # --- NOUVEAU CODE POUR LE CAMEMBERT ---
+    # Pipeline d'agrégation pour les dépenses par catégorie
+    pipeline = [
+        {
+            "$match": {
+                "date": {"$gte": current_month_start, "$lt": next_month_start},
+                "type": "Dépense"
+            }
+        },
+        {
+            "$group": {
+                "_id": "$category_id",
+                "value": {"$sum": "$amount"}
+            }
+        },
+        {
+            "$lookup": {
+                "from": "categories",
+                "localField": "_id",
+                "foreignField": "id",
+                "as": "category_details"
+            }
+        },
+        {
+            "$unwind": "$category_details"
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "name": "$category_details.name",
+                "value": "$value"
+            }
+        }
+    ]
+    expense_breakdown_cursor = transactions_collection.aggregate(pipeline)
+    expense_breakdown = await expense_breakdown_cursor.to_list(None)
+    # --- FIN DU NOUVEAU CODE ---
+
     # Last 12 months data
     monthly_data = []
     for i in range(12):
@@ -498,7 +541,8 @@ async def get_dashboard_stats():
         "revenus_ce_mois": revenus,
         "depenses_ce_mois": depenses,
         "epargne_du_mois": epargne,
-        "monthly_data": monthly_data
+        "monthly_data": monthly_data,
+        "expense_breakdown": expense_breakdown  # Ajout des données du camembert
     }
 
 if __name__ == "__main__":
