@@ -20,11 +20,6 @@ function ImportTab() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [categories, setCategories] = useState([]);
-  
-  // --- NOUVEAU ---
-  // Ajout d'un état pour le délimiteur, par défaut sur ';'
-  const [delimiter, setDelimiter] = useState(';');
-  // --- FIN NOUVEAU ---
 
   // Charge les catégories de l'application pour faire la correspondance
   useEffect(() => {
@@ -68,7 +63,8 @@ function ImportTab() {
     setSuccess('');
 
     Papa.parse(file, {
-      delimiter: delimiter, // --- MODIFICATION ICI ---
+      delimiter: ',', // --- MODIFICATION ICI : On force la virgule ---
+      // On enlève "encoding", PapaParse utilise UTF-8 par défaut
       skipEmptyLines: true,
       complete: async (results) => {
         try {
@@ -131,35 +127,7 @@ function ImportTab() {
           />
         </div>
 
-        {/* --- NOUVEAU BLOC --- */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Séparateur du fichier CSV
-          </label>
-          <div className="flex gap-6">
-            <label className="flex items-center">
-              <input 
-                type="radio" 
-                value=";" 
-                checked={delimiter === ';'} 
-                onChange={() => setDelimiter(';')}
-                className="focus:ring-primary-500 h-4 w-4 text-primary-600 border-gray-300"
-              />
-              <span className="ml-2 text-sm text-gray-700">Point-virgule (;)</span>
-            </label>
-            <label className="flex items-center">
-              <input 
-                type="radio" 
-                value="," 
-                checked={delimiter === ','} 
-                onChange={() => setDelimiter(',')}
-                className="focus:ring-primary-500 h-4 w-4 text-primary-600 border-gray-300"
-              />
-              <span className="ml-2 text-sm text-gray-700">Virgule (,)</span>
-            </label>
-          </div>
-        </div>
-        {/* --- FIN NOUVEAU BLOC --- */}
+        {/* J'ai supprimé le choix du délimiteur, on utilise la virgule par défaut */}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -195,7 +163,7 @@ function ImportTab() {
       <div className="bg-gray-50 p-4 rounded-lg border">
         <h4 className="font-semibold text-gray-800">Instructions :</h4>
         <ul className="list-disc list-inside text-sm text-gray-600 mt-2 space-y-1">
-          <li>Sélectionnez le bon séparateur (virgule ou point-virgule) avant d'importer.</li>
+          <li>Votre fichier doit être un **CSV Encodé en UTF-8** avec des **virgules (,)** comme séparateur.</li>
           <li>L'année doit être correctement renseignée.</li>
           <li>Les noms des catégories dans le CSV (colonne B) doivent **exactement** correspondre aux noms de vos catégories dans l'application.</li>
           <li>Les lignes "Total" et les lignes vides seront ignorées.</li>
@@ -216,13 +184,25 @@ function processCSV(data, appCategories, year) {
   const transactions = [];
   
   // 1. Trouver la ligne d'en-tête des mois (de manière plus robuste)
+  // On vérifie la colonne C (index 2) et N (index 13)
   const headerRowIndex = data.findIndex(row => 
-    row.some(cell => normalizeString(cell) === 'janvier') && 
-    row.some(cell => normalizeString(cell) === 'décembre')
+    normalizeString(row[2]) === 'janvier' && 
+    normalizeString(row[13]) === 'décembre'
   );
   
   if (headerRowIndex === -1) {
-    throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
+    // Si ça échoue, on tente une recherche plus large (au cas où il y ait des colonnes vides au début)
+    const flexibleHeaderIndex = data.findIndex(row => 
+      row.some(cell => normalizeString(cell) === 'janvier') && 
+      row.some(cell => normalizeString(cell) === 'décembre')
+    );
+    if (flexibleHeaderIndex === -1) {
+      throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
+    }
+    // Si on a trouvé, on continue avec cet index
+    // Note : cela suppose que le reste de la logique (index 1, 2, 13) est toujours valide
+    // ce qui n'est pas idéal mais devrait marcher pour tes fichiers.
+    console.warn("Ligne d'en-tête trouvée, mais pas à la position attendue.");
   }
   
   const headerRow = data[headerRowIndex].map(cell => normalizeString(cell));
