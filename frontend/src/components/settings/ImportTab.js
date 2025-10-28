@@ -4,9 +4,10 @@ import { Upload, Loader, AlertCircle, CheckCircle } from 'lucide-react';
 import Papa from 'papaparse';
 
 // Fait correspondre les mois du CSV aux numéros (base 0 pour JS Date)
+// Gère "Août" (2024) et "Aoūt" (2025)
 const monthMap = {
   'Janvier': 0, 'Février': 1, 'Mars': 2, 'Avril': 3, 'Mai': 4, 'Juin': 5,
-  'Juillet': 6, 'Aoūt': 7, 'Septembre': 8, 'Octobre': 9, 'Novembre': 10, 'Décembre': 11 // <--- MODIFICATION ICI
+  'Juillet': 6, 'Août': 7, 'Aoūt': 7, 'Septembre': 8, 'Octobre': 9, 'Novembre': 10, 'Décembre': 11
 };
 
 function ImportTab() {
@@ -59,7 +60,7 @@ function ImportTab() {
     setSuccess('');
 
     Papa.parse(file, {
-      delimiter: ';', // <--- MODIFICATION ICI
+      delimiter: ';', // Spécifie le point-virgule comme délimiteur
       skipEmptyLines: true,
       complete: async (results) => {
         try {
@@ -176,20 +177,24 @@ function ImportTab() {
 function processCSV(data, appCategories, year) {
   const transactions = [];
   
-  // 1. Trouver la ligne d'en-tête des mois
-  const headerRowIndex = data.findIndex(row => (row[2] || '').trim() === 'Janvier' && (row[13] || '').trim() === 'Décembre');
+  // 1. Trouver la ligne d'en-tête des mois (de manière plus robuste)
+  const headerRowIndex = data.findIndex(row => 
+    row.some(cell => (cell || '').trim() === 'Janvier') && 
+    row.some(cell => (cell || '').trim() === 'Décembre')
+  );
+  
   if (headerRowIndex === -1) {
     throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
   }
-  const headerRow = data[headerRowIndex];
-
-  // 2. Trouver la section des Revenus
-  const revenueStartIndex = data.findIndex(row => (row[1] || '').trim() === 'Salaire');
-  const revenueEndIndex = data.findIndex(row => (row[1] || '').trim() === 'Total des revenus');
+  const headerRow = data[headerRowIndex].map(cell => (cell || '').trim());
   
-  // 3. Trouver la section des Dépenses
-  const expenseStartIndex = data.findIndex(row => (row[1] || '').trim().startsWith('Alimentation'));
-  const expenseEndIndex = data.findIndex(row => (row[1] || '').trim() === 'Total des dépenses');
+  // 2. Trouver la section des Revenus (en se basant sur "Salaire" ou "Total des revenus")
+  const revenueStartIndex = data.findIndex(row => (row[1] || '').trim().toLowerCase() === 'salaire');
+  const revenueEndIndex = data.findIndex(row => (row[1] || '').trim().toLowerCase() === 'total des revenus');
+  
+  // 3. Trouver la section des Dépenses (en se basant sur "Alimentation" ou "Total des dépenses")
+  const expenseStartIndex = data.findIndex(row => (row[1] || '').trim().toLowerCase().startsWith('alimentation'));
+  const expenseEndIndex = data.findIndex(row => (row[1] || '').trim().toLowerCase() === 'total des dépenses');
 
   if (revenueStartIndex === -1 || expenseStartIndex === -1) {
     throw new Error('Impossible de trouver les sections "Salaire" ou "Alimentation".');
@@ -206,8 +211,8 @@ function processCSV(data, appCategories, year) {
 
   // 5. Parcourir les lignes de données (revenus et dépenses)
   const dataRows = [
-    ...data.slice(revenueStartIndex, revenueEndIndex),
-    ...data.slice(expenseStartIndex, expenseEndIndex)
+    ...data.slice(revenueStartIndex, revenueEndIndex > -1 ? revenueEndIndex : data.length),
+    ...data.slice(expenseStartIndex, expenseEndIndex > -1 ? expenseEndIndex : data.length)
   ];
 
   for (const row of dataRows) {
@@ -221,30 +226,31 @@ function processCSV(data, appCategories, year) {
     const categoryInfo = categoryMap[categoryName];
     
     if (!categoryInfo) {
-      console.warn(`Catégorie ignorée (non trouvée) : "${row[1]}"`);
+      console.warn(`Catégorie ignorée (non trouvée dans l'app) : "${row[1].trim()}"`);
       continue;
     }
 
     // 6. Parcourir les colonnes (mois) pour cette ligne
-    for (let colIndex = 2; colIndex < 14; colIndex++) { // de Janvier (col 2) à Décembre (col 13)
-      const monthName = (headerRow[colIndex] || '').trim();
+    for (let colIndex = 2; colIndex < headerRow.length; colIndex++) {
+      const monthName = headerRow[colIndex];
       const monthIndex = monthMap[monthName];
       
-      if (monthIndex === undefined) continue;
+      if (monthIndex === undefined) continue; // Ignore les colonnes non-mois (ex: "Total")
       
       const amountStr = (row[colIndex] || '').replace(/€/g, '').replace(/\s/g, '').trim();
       const amount = parseFloat(amountStr.replace(',', '.'));
 
       if (!amountStr || isNaN(amount) || amount === 0) {
-        continue;
+        continue; // Ignore les cellules vides ou à 0
       }
       
+      // On met le 15 du mois par défaut pour éviter les pbs de fuseaux horaires
       const transactionDate = new Date(year, monthIndex, 15);
       
       transactions.push({
         date: transactionDate.toISOString(),
-        amount: Math.abs(amount),
-        type: categoryInfo.type,
+        amount: Math.abs(amount), // Assure que le montant est positif
+        type: categoryInfo.type, // "Revenu" ou "Dépense"
         description: `Import CSV - ${row[1].trim()}`,
         category_id: categoryInfo.id,
         subcategory_id: null,
