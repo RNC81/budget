@@ -12,9 +12,16 @@ import uuid
 app = FastAPI()
 
 # CORS Configuration
+# Spécifier explicitement les origines autorisées pour permettre l'envoi de credentials (cookies)
+# allow_origins=["*"] n'est pas compatible avec allow_credentials=True
+origins = [
+    "https://budget-frontend.onrender.com",
+    "http://localhost:3000"  # Pour les tests locaux
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
