@@ -6,9 +6,12 @@ import Papa from 'papaparse';
 // Fait correspondre les mois du CSV aux numéros (base 0 pour JS Date)
 // Gère "Août" (2024) et "Aoūt" (2025)
 const monthMap = {
-  'Janvier': 0, 'Février': 1, 'Mars': 2, 'Avril': 3, 'Mai': 4, 'Juin': 5,
-  'Juillet': 6, 'Août': 7, 'Aoūt': 7, 'Septembre': 8, 'Octobre': 9, 'Novembre': 10, 'Décembre': 11
+  'janvier': 0, 'février': 1, 'mars': 2, 'avril': 3, 'mai': 4, 'juin': 5,
+  'juillet': 6, 'août': 7, 'aoūt': 7, 'septembre': 8, 'octobre': 9, 'novembre': 10, 'décembre': 11
 };
+
+// Fonction pour nettoyer les noms (utilisée pour les mois et les catégories)
+const normalizeString = (str) => (str || '').trim().toLowerCase();
 
 function ImportTab() {
   const [file, setFile] = useState(null);
@@ -17,6 +20,11 @@ function ImportTab() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [categories, setCategories] = useState([]);
+  
+  // --- NOUVEAU ---
+  // Ajout d'un état pour le délimiteur, par défaut sur ';'
+  const [delimiter, setDelimiter] = useState(';');
+  // --- FIN NOUVEAU ---
 
   // Charge les catégories de l'application pour faire la correspondance
   useEffect(() => {
@@ -60,16 +68,14 @@ function ImportTab() {
     setSuccess('');
 
     Papa.parse(file, {
-      // --- MODIFICATION ICI ---
-      // On enlève "delimiter: ';'" pour laisser PapaParse auto-détecter
-      // s'il s'agit d'une virgule ou d'un point-virgule.
+      delimiter: delimiter, // --- MODIFICATION ICI ---
       skipEmptyLines: true,
       complete: async (results) => {
         try {
           const transactionsToUpload = processCSV(results.data, categories, parseInt(year));
           
           if (transactionsToUpload.length === 0) {
-            setError('Aucune transaction valide trouvée dans le fichier. Vérifiez le format.');
+            setError('Aucune transaction valide trouvée dans le fichier. Vérifiez le format ou le délimiteur.');
             setLoading(false);
             return;
           }
@@ -125,6 +131,36 @@ function ImportTab() {
           />
         </div>
 
+        {/* --- NOUVEAU BLOC --- */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Séparateur du fichier CSV
+          </label>
+          <div className="flex gap-6">
+            <label className="flex items-center">
+              <input 
+                type="radio" 
+                value=";" 
+                checked={delimiter === ';'} 
+                onChange={() => setDelimiter(';')}
+                className="focus:ring-primary-500 h-4 w-4 text-primary-600 border-gray-300"
+              />
+              <span className="ml-2 text-sm text-gray-700">Point-virgule (;)</span>
+            </label>
+            <label className="flex items-center">
+              <input 
+                type="radio" 
+                value="," 
+                checked={delimiter === ','} 
+                onChange={() => setDelimiter(',')}
+                className="focus:ring-primary-500 h-4 w-4 text-primary-600 border-gray-300"
+              />
+              <span className="ml-2 text-sm text-gray-700">Virgule (,)</span>
+            </label>
+          </div>
+        </div>
+        {/* --- FIN NOUVEAU BLOC --- */}
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Fichier CSV (format "Mon Budget XXXX")
@@ -159,7 +195,7 @@ function ImportTab() {
       <div className="bg-gray-50 p-4 rounded-lg border">
         <h4 className="font-semibold text-gray-800">Instructions :</h4>
         <ul className="list-disc list-inside text-sm text-gray-600 mt-2 space-y-1">
-          <li>Le fichier doit être au format CSV de ton budget (Mon budget 2024, etc.).</li>
+          <li>Sélectionnez le bon séparateur (virgule ou point-virgule) avant d'importer.</li>
           <li>L'année doit être correctement renseignée.</li>
           <li>Les noms des catégories dans le CSV (colonne B) doivent **exactement** correspondre aux noms de vos catégories dans l'application.</li>
           <li>Les lignes "Total" et les lignes vides seront ignorées.</li>
@@ -180,25 +216,24 @@ function processCSV(data, appCategories, year) {
   const transactions = [];
   
   // 1. Trouver la ligne d'en-tête des mois (de manière plus robuste)
-  // On cherche une ligne qui contient à la fois "Janvier" et "Décembre" (après nettoyage)
   const headerRowIndex = data.findIndex(row => 
-    row.some(cell => (cell || '').trim() === 'Janvier') && 
-    row.some(cell => (cell || '').trim() === 'Décembre')
+    row.some(cell => normalizeString(cell) === 'janvier') && 
+    row.some(cell => normalizeString(cell) === 'décembre')
   );
   
   if (headerRowIndex === -1) {
     throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
   }
   
-  const headerRow = data[headerRowIndex].map(cell => (cell || '').trim());
+  const headerRow = data[headerRowIndex].map(cell => normalizeString(cell));
   
   // 2. Trouver la section des Revenus (en se basant sur "Salaire" ou "Total des revenus")
-  const revenueStartIndex = data.findIndex(row => (row[1] || '').trim().toLowerCase() === 'salaire');
-  const revenueEndIndex = data.findIndex(row => (row[1] || '').trim().toLowerCase() === 'total des revenus');
+  const revenueStartIndex = data.findIndex(row => normalizeString(row[1]) === 'salaire');
+  const revenueEndIndex = data.findIndex(row => normalizeString(row[1]) === 'total des revenus');
   
   // 3. Trouver la section des Dépenses (en se basant sur "Alimentation" ou "Total des dépenses")
-  const expenseStartIndex = data.findIndex(row => (row[1] || '').trim().toLowerCase().startsWith('alimentation'));
-  const expenseEndIndex = data.findIndex(row => (row[1] || '').trim().toLowerCase() === 'total des dépenses');
+  const expenseStartIndex = data.findIndex(row => normalizeString(row[1]).startsWith('alimentation'));
+  const expenseEndIndex = data.findIndex(row => normalizeString(row[1]) === 'total des dépenses');
 
   if (revenueStartIndex === -1 || expenseStartIndex === -1) {
     throw new Error('Impossible de trouver les sections "Salaire" ou "Alimentation".');
@@ -207,7 +242,7 @@ function processCSV(data, appCategories, year) {
   // 4. Créer un mappage Nom de Catégorie -> ID & Type
   const categoryMap = {};
   appCategories.forEach(cat => {
-    categoryMap[cat.name.trim().toLowerCase()] = {
+    categoryMap[normalizeString(cat.name)] = {
       id: cat.id,
       type: cat.type,
     };
@@ -220,7 +255,7 @@ function processCSV(data, appCategories, year) {
   ];
 
   for (const row of dataRows) {
-    const categoryName = (row[1] || '').trim().toLowerCase();
+    const categoryName = normalizeString(row[1]);
     
     // Ignore les lignes vides ou les totaux
     if (!categoryName || categoryName.includes('total')) {
