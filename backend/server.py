@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List # Ajout de List
 from datetime import datetime, timezone
 import os
 import uuid
@@ -119,19 +119,31 @@ class RecurringTransactionUpdate(BaseModel):
     frequency: Optional[str] = None
     day_of_month: Optional[int] = None
 
+# --- NOUVEAU MODÈLE POUR L'IMPORT EN MASSE ---
+class TransactionBulk(BaseModel):
+    transactions: List[TransactionCreate]
+# --- FIN DU NOUVEAU MODÈLE ---
+
 # Default Categories
 DEFAULT_CATEGORIES = [
     {"name": "Salaire", "type": "Revenu"},
-    {"name": "Prime", "type": "Revenu"},
-    {"name": "Autre revenu", "type": "Revenu"},
-    {"name": "Logement", "type": "Dépense"},
+    {"name": "Aide Papa", "type": "Revenu"},
+    {"name": "Autres revenu", "type": "Revenu"},
+    {"name": "Logement", "type": "Dépense"}, # Renommé depuis Loyer pour correspondre au CSV
     {"name": "Alimentation", "type": "Dépense"},
     {"name": "Transport", "type": "Dépense"},
     {"name": "Santé", "type": "Dépense"},
-    {"name": "Loisirs", "type": "Dépense"},
+    {"name": "Loisirs", "type": "Dépense"}, # Renommé depuis Sortie Loisirs
     {"name": "Abonnements", "type": "Dépense"},
-    {"name": "Shopping", "type": "Dépense"},
+    {"name": "Shopping", "type": "Dépense"}, # Renommé depuis Achat perso
     {"name": "Autre dépense", "type": "Dépense"},
+    {"name": "Cadeaux", "type": "Dépense"},
+    {"name": "Coiffeur", "type": "Dépense"},
+    {"name": "Prêt", "type": "Dépense"},
+    {"name": "Restaurant", "type": "Dépense"},
+    {"name": "Investissement", "type": "Dépense"},
+    {"name": "Etudes", "type": "Dépense"},
+    {"name": "Vacances", "type": "Dépense"},
 ]
 
 async def initialize_default_categories():
@@ -186,7 +198,6 @@ async def update_category(category_id: str, category: CategoryUpdate):
         await categories_collection.update_one({"id": category_id}, {"$set": update_data})
     
     updated = await categories_collection.find_one({"id": category_id})
-    # Convert _id to str if it exists, though we return a known structure
     return {"id": updated["id"], "name": updated["name"], "type": updated["type"], "created_at": updated["created_at"]}
 
 @app.delete("/api/categories/{category_id}")
@@ -195,15 +206,11 @@ async def delete_category(category_id: str):
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
     
-    # Delete associated subcategories
     await subcategories_collection.delete_many({"category_id": category_id})
-    
-    # Remove category from transactions (set to None)
     await transactions_collection.update_many(
         {"category_id": category_id},
         {"$set": {"category_id": None, "subcategory_id": None}}
     )
-    
     await categories_collection.delete_one({"id": category_id})
     return {"message": "Category deleted successfully"}
 
@@ -215,7 +222,6 @@ async def get_subcategories():
 
 @app.post("/api/subcategories")
 async def create_subcategory(subcategory: SubCategoryCreate):
-    # Verify category exists
     category = await categories_collection.find_one({"id": subcategory.category_id})
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -249,12 +255,10 @@ async def delete_subcategory(subcategory_id: str):
     if not existing:
         raise HTTPException(status_code=404, detail="SubCategory not found")
     
-    # Remove subcategory from transactions
     await transactions_collection.update_many(
         {"subcategory_id": subcategory_id},
         {"$set": {"subcategory_id": None}}
     )
-    
     await subcategories_collection.delete_one({"id": subcategory_id})
     return {"message": "SubCategory deleted successfully"}
 
@@ -295,7 +299,6 @@ async def get_transactions(
 @app.post("/api/transactions")
 async def create_transaction(transaction: TransactionCreate):
     transaction_id = str(uuid.uuid4())
-    # Renommée en new_transaction_data
     new_transaction_data = {
         "id": transaction_id,
         "date": transaction.date,
@@ -306,11 +309,36 @@ async def create_transaction(transaction: TransactionCreate):
         "subcategory_id": transaction.subcategory_id,
         "created_at": datetime.now(timezone.utc)
     }
-    # Insère une .copy() pour éviter que l'objet new_transaction_data ne soit muté par MongoDB
     await transactions_collection.insert_one(new_transaction_data.copy())
-    
-    # Renvoie le dictionnaire original, qui est propre et sérialisable en JSON
     return new_transaction_data
+
+# --- NOUVEL ENDPOINT POUR L'IMPORT EN MASSE ---
+@app.post("/api/transactions/bulk")
+async def create_bulk_transactions(data: TransactionBulk):
+    new_transactions_data = []
+    for transaction in data.transactions:
+        transaction_id = str(uuid.uuid4())
+        new_transaction_data = {
+            "id": transaction_id,
+            "date": transaction.date,
+            "amount": transaction.amount,
+            "type": transaction.type,
+            "description": transaction.description,
+            "category_id": transaction.category_id,
+            "subcategory_id": transaction.subcategory_id,
+            "created_at": datetime.now(timezone.utc)
+        }
+        new_transactions_data.append(new_transaction_data)
+    
+    if not new_transactions_data:
+        raise HTTPException(status_code=400, detail="No transactions to import.")
+
+    try:
+        await transactions_collection.insert_many(new_transactions_data, ordered=False)
+        return {"message": f"{len(new_transactions_data)} transactions imported successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred during bulk insert: {e}")
+# --- FIN DU NOUVEL ENDPOINT ---
 
 @app.put("/api/transactions/{transaction_id}")
 async def update_transaction(transaction_id: str, transaction: TransactionUpdate):
@@ -469,8 +497,7 @@ async def get_dashboard_stats():
     depenses = sum(t["amount"] for t in current_month_transactions if t["type"] == "Dépense")
     epargne = revenus - depenses
     
-    # --- NOUVEAU CODE POUR LE CAMEMBERT ---
-    # Pipeline d'agrégation pour les dépenses par catégorie
+    # --- Code pour le CAMEMBERT ---
     pipeline = [
         {
             "$match": {
@@ -505,7 +532,7 @@ async def get_dashboard_stats():
     ]
     expense_breakdown_cursor = transactions_collection.aggregate(pipeline)
     expense_breakdown = await expense_breakdown_cursor.to_list(None)
-    # --- FIN DU NOUVEAU CODE ---
+    # --- FIN DU CODE CAMEMBERT ---
 
     # Last 12 months data
     monthly_data = []
@@ -527,7 +554,7 @@ async def get_dashboard_stats():
             "date": {"$gte": month_start, "$lt": month_end}
         }).to_list(None)
         
-        month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Revenu")
+        month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Dépense")
         month_depenses = sum(t["amount"] for t in month_transactions if t["type"] == "Dépense")
         
         month_names = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
@@ -542,7 +569,7 @@ async def get_dashboard_stats():
         "depenses_ce_mois": depenses,
         "epargne_du_mois": epargne,
         "monthly_data": monthly_data,
-        "expense_breakdown": expense_breakdown  # Ajout des données du camembert
+        "expense_breakdown": expense_breakdown
     }
 
 if __name__ == "__main__":

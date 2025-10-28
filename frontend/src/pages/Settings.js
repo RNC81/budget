@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Settings as SettingsIcon, Tag, FolderTree, Repeat } from 'lucide-react';
+import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload } from 'lucide-react';
 import CategoriesTab from '../components/settings/CategoriesTab';
 import SubCategoriesTab from '../components/settings/SubCategoriesTab';
 import RecurringTransactionsTab from '../components/settings/RecurringTransactionsTab';
+import ImportTab from '../components/settings/ImportTab'; // <-- NOUVEAU
 
 function Settings() {
   const [activeTab, setActiveTab] = useState('categories');
@@ -11,6 +12,7 @@ function Settings() {
     { id: 'categories', name: 'Catégories', icon: Tag },
     { id: 'subcategories', name: 'Sous-Catégories', icon: FolderTree },
     { id: 'recurring', name: 'Transactions Récurrentes', icon: Repeat },
+    { id: 'import', name: 'Importer', icon: Upload }, // <-- NOUVEAU
   ];
 
   return (
@@ -23,13 +25,13 @@ function Settings() {
           </div>
           <h1 className="text-3xl font-bold text-gray-900">Paramètres</h1>
         </div>
-        <p className="text-gray-600">Gérez vos catégories et transactions récurrentes</p>
+        <p className="text-gray-600">Gérez vos catégories, transactions et importations</p>
       </div>
 
       {/* Tabs */}
       <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
         <div className="border-b border-gray-200">
-          <nav className="flex space-x-1 px-4" aria-label="Tabs">
+          <nav className="flex space-x-1 px-4 overflow-x-auto" aria-label="Tabs">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -37,7 +39,7 @@ function Settings() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center space-x-2 px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                  className={`flex items-center space-x-2 px-6 py-4 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                     isActive
                       ? 'border-primary-600 text-primary-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -55,6 +57,7 @@ function Settings() {
           {activeTab === 'categories' && <CategoriesTab />}
           {activeTab === 'subcategories' && <SubCategoriesTab />}
           {activeTab === 'recurring' && <RecurringTransactionsTab />}
+          {activeTab === 'import' && <ImportTab />} {/* <-- NOUVEAU */}
         </div>
       </div>
     </div>
