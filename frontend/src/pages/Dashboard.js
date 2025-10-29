@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank } from 'lucide-react'; // Ajout de PiggyBank
+import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank } from 'lucide-react';
 import TransactionModal from '../components/TransactionModal';
 
 // Couleurs pour le graphique camembert
@@ -48,7 +48,7 @@ function Dashboard() {
         params.month = selectedMonth;
       }
       
-      const response = await api.get('/api/dashboard/stats', { params });
+      const response = await api.get('/api/dashboard/stats');
       setStats(response.data);
     } catch (error) {
       console.error('Error fetching stats:', error);
@@ -127,7 +127,7 @@ function Dashboard() {
       </div>
 
 
-      {/* Stats Cards - MODIFIÉ POUR 4 COLONNES */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* Revenus */}
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow">
@@ -179,7 +179,7 @@ function Dashboard() {
           </p>
         </div>
 
-        {/* --- NOUVELLE CARTE : ÉPARGNE GLOBALE --- */}
+        {/* ÉPARGNE GLOBALE */}
         <div className={`bg-white rounded-2xl shadow-lg p-6 border-2 ${
           globalEpargnePositive ? 'border-primary-300' : 'border-red-300'
         } hover:shadow-xl transition-shadow`}>
@@ -198,7 +198,6 @@ function Dashboard() {
             Total de tout votre historique
           </p>
         </div>
-        {/* --- FIN NOUVELLE CARTE --- */}
 
       </div>
 
@@ -246,8 +245,10 @@ function Dashboard() {
                     cy="50%"
                     outerRadius={120}
                     fill="#8884d8"
-                    labelLine={false}
-                    label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    // --- LIGNES SUPPRIMÉES ---
+                    // labelLine={false}
+                    // label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    // --- FIN DES LIGNES SUPPRIMÉES ---
                   >
                     {stats.expense_breakdown.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
