@@ -1,8 +1,13 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Receipt, Settings, Lock, Menu, X } from 'lucide-react';
+// 1. Importer useAuth pour accéder au contexte
+import { useAuth } from '../App';
+// 2. Remplacer 'Lock' par 'LogOut'
+import { LayoutDashboard, Receipt, Settings, LogOut, Menu, X } from 'lucide-react';
 
 function Layout({ children }) {
+  // 3. Récupérer 'logout' et 'user' du contexte
+  const { logout, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -13,9 +18,10 @@ function Layout({ children }) {
     { name: 'Paramètres', href: '/settings', icon: Settings },
   ];
 
-  const handleLock = () => {
-    localStorage.removeItem('isAuthenticated');
-    navigate('/access-code');
+  // 4. Remplacer 'handleLock' par 'handleLogout'
+  const handleLogout = () => {
+    logout(); // Appelle la fonction du contexte
+    navigate('/login'); // Redirige vers la page de connexion
   };
 
   return (
@@ -57,15 +63,18 @@ function Layout({ children }) {
               </div>
             </div>
 
-            {/* Lock Button Desktop */}
+            {/* 5. Bouton de déconnexion Desktop + Email Utilisateur */}
             <div className="hidden md:flex md:items-center">
+              <span className="text-sm text-gray-600 mr-4" title={user?.email}>
+                Bonjour, <span className="font-medium">{user?.email}</span>
+              </span>
               <button
-                onClick={handleLock}
-                className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors"
-                title="Verrouiller l'application"
+                onClick={handleLogout}
+                className="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-red-100 hover:text-red-700 transition-colors"
+                title="Se déconnecter"
               >
-                <Lock className="h-4 w-4 mr-2" />
-                Verrouiller
+                <LogOut className="h-4 w-4 mr-2" />
+                Déconnexion
               </button>
             </div>
 
@@ -104,17 +113,24 @@ function Layout({ children }) {
                   </Link>
                 );
               })}
-              <div className="border-t border-gray-200 my-2"></div>
-              <button
-                onClick={() => {
-                  handleLock();
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full flex items-center px-3 py-2 rounded-lg text-base font-medium text-gray-600 hover:bg-gray-100"
-              >
-                <Lock className="h-5 w-5 mr-3" />
-                Verrouiller
-              </button>
+              
+              {/* 6. Email et Déconnexion Mobile */}
+              <div className="border-t border-gray-200 pt-3 mt-2 space-y-2">
+                <div className="px-3 py-2 text-sm text-gray-500 truncate" title={user?.email}>
+                  Connecté : <span className="font-medium block">{user?.email}</span>
+                </div>
+                <button
+                  onClick={() => {
+                    handleLogout();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center px-3 py-2 rounded-lg text-base font-medium text-gray-600 hover:bg-red-100 hover:text-red-700"
+                >
+                  <LogOut className="h-5 w-5 mr-3" />
+                  Déconnexion
+                </button>
+              </div>
+              
             </div>
           </div>
         )}

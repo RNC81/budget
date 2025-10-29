@@ -1,15 +1,33 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import Optional, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import os
 import uuid
+from passlib.context import CryptContext
+from jose import JWTError, jwt
 
+# --- Configuration de la Sécurité (Nouveau) ---
+
+# Contexte de hachage pour les mots de passe
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Clé secrète pour les JWT (JSON Web Tokens)
+# !! IMPORTANT : À définir dans vos variables d'environnement (ex: sur Render) !!
+SECRET_KEY = os.getenv("SECRET_KEY", "u8!l$058fy+bhkeg7z$73=n8m=keb!tp9ys7si2)4$a0i&6%9l")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 jours
+
+# Schéma OAuth2 pour la récupération du token
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+
+# --- Initialisation de FastAPI ---
 app = FastAPI()
 
-# CORS Configuration
+# Configuration CORS (Identique)
 origins = [
     "https://budget-1-fbg6.onrender.com",
     "http://localhost:3000"
@@ -23,35 +41,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB Connection
+# Connexion MongoDB (Identique)
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/budget_tracker")
 client = AsyncIOMotorClient(MONGO_URL)
 db = client.budget_tracker
 
-# Collections
+# Collections (Ajout de 'users')
+users_collection = db.users
 transactions_collection = db.transactions
 categories_collection = db.categories
 subcategories_collection = db.subcategories
 recurring_transactions_collection = db.recurring_transactions
 
-# Models
+# --- Modèles Pydantic (Mis à jour) ---
+
+# Nouveaux modèles pour l'authentification
+class UserBase(BaseModel):
+    email: EmailStr
+
+class UserCreate(UserBase):
+    password: str
+
+class UserPublic(UserBase):
+    id: str
+
+class UserInDB(UserPublic):
+    hashed_password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    email: Optional[str] = None
+
+# Modèles de données existants (Mis à jour avec user_id)
 class Category(BaseModel):
     id: str
+    user_id: str # Ajouté
     name: str
-    type: str  # "Revenu" or "Dépense"
+    type: str
     created_at: datetime
 
 class SubCategory(BaseModel):
     id: str
+    user_id: str # Ajouté
     category_id: str
     name: str
     created_at: datetime
 
 class Transaction(BaseModel):
     id: str
+    user_id: str # Ajouté
     date: datetime
     amount: float
-    type: str  # "Revenu" or "Dépense"
+    type: str
     description: Optional[str] = None
     category_id: Optional[str] = None
     subcategory_id: Optional[str] = None
@@ -59,16 +103,17 @@ class Transaction(BaseModel):
 
 class RecurringTransaction(BaseModel):
     id: str
+    user_id: str # Ajouté
     amount: float
     type: str
     description: Optional[str] = None
     category_id: Optional[str] = None
     subcategory_id: Optional[str] = None
-    frequency: str  # "Mensuel", "Annuel"
+    frequency: str
     day_of_month: int
     created_at: datetime
 
-# Request Models
+# Modèles de Requête (Identiques)
 class CategoryCreate(BaseModel):
     name: str
     type: str
@@ -122,18 +167,68 @@ class RecurringTransactionUpdate(BaseModel):
 class TransactionBulk(BaseModel):
     transactions: List[TransactionCreate]
 
-# Default Categories
+# --- Utilitaires de Sécurité (Nouveau) ---
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Vérifie un mot de passe haché"""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    """Hache un mot de passe"""
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """Crée un token JWT"""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_user(email: str) -> Optional[UserInDB]:
+    """Récupère un utilisateur depuis la DB par email"""
+    user = await users_collection.find_one({"email": email})
+    if user:
+        return UserInDB(**user)
+    return None
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
+    """Décode le token JWT et retourne l'utilisateur actuel"""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+        token_data = TokenData(email=email)
+    except JWTError:
+        raise credentials_exception
+    
+    user = await get_user(token_data.email)
+    if user is None:
+        raise credentials_exception
+    return user
+
+# --- Gestion des Catégories par Défaut (Mis à jour) ---
+
 DEFAULT_CATEGORIES = [
     {"name": "Salaire", "type": "Revenu"},
     {"name": "Aide Papa", "type": "Revenu"},
     {"name": "Autres revenu", "type": "Revenu"},
-    {"name": "Logement", "type": "Dépense"}, # Renommé depuis Loyer pour correspondre au CSV
+    {"name": "Logement", "type": "Dépense"},
     {"name": "Alimentation", "type": "Dépense"},
     {"name": "Transport", "type": "Dépense"},
     {"name": "Santé", "type": "Dépense"},
-    {"name": "Loisirs", "type": "Dépense"}, # Renommé depuis Sortie Loisirs
+    {"name": "Loisirs", "type": "Dépense"},
     {"name": "Abonnements", "type": "Dépense"},
-    {"name": "Shopping", "type": "Dépense"}, # Renommé depuis Achat perso
+    {"name": "Shopping", "type": "Dépense"},
     {"name": "Autre dépense", "type": "Dépense"},
     {"name": "Cadeaux", "type": "Dépense"},
     {"name": "Coiffeur", "type": "Dépense"},
@@ -144,40 +239,113 @@ DEFAULT_CATEGORIES = [
     {"name": "Vacances", "type": "Dépense"},
 ]
 
-async def initialize_default_categories():
-    """Create default categories if none exist"""
-    existing_count = await categories_collection.count_documents({})
+async def initialize_default_categories(user_id: str):
+    """Crée les catégories par défaut pour un NOUVEL utilisateur"""
+    existing_count = await categories_collection.count_documents({"user_id": user_id})
     if existing_count == 0:
         for cat in DEFAULT_CATEGORIES:
             category_id = str(uuid.uuid4())
             await categories_collection.insert_one({
                 "id": category_id,
+                "user_id": user_id, # Ajouté
                 "name": cat["name"],
                 "type": cat["type"],
                 "created_at": datetime.now(timezone.utc)
             })
 
-# Initialize default categories on startup
-@app.on_event("startup")
-async def startup_event():
-    await initialize_default_categories()
+# --- Routes d'Authentification (Nouveau) ---
 
-# Routes
+@app.post("/api/auth/register", response_model=UserPublic)
+async def register_user(user: UserCreate):
+    """Crée un nouvel utilisateur"""
+    existing_user = await get_user(user.email)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    hashed_password = get_password_hash(user.password)
+    user_id = str(uuid.uuid4())
+    
+    new_user_data = {
+        "id": user_id,
+        "email": user.email,
+        "hashed_password": hashed_password
+    }
+    
+    await users_collection.insert_one(new_user_data)
+    
+    # --- Logique de Migration / Initialisation ---
+    # Compte le nombre total d'utilisateurs *après* l'insertion
+    user_count = await users_collection.count_documents({})
+    
+    if user_count == 1:
+        # C'est le PREMIER utilisateur. On lui attribue toutes les données orphelines.
+        await transactions_collection.update_many(
+            {"user_id": {"$exists": False}},
+            {"$set": {"user_id": user_id}}
+        )
+        await categories_collection.update_many(
+            {"user_id": {"$exists": False}},
+            {"$set": {"user_id": user_id}}
+        )
+        await subcategories_collection.update_many(
+            {"user_id": {"$exists": False}},
+            {"$set": {"user_id": user_id}}
+        )
+        await recurring_transactions_collection.update_many(
+            {"user_id": {"$exists": False}},
+            {"$set": {"user_id": user_id}}
+        )
+    else:
+        # C'est un utilisateur suivant. On crée juste ses catégories par défaut.
+        await initialize_default_categories(user_id)
+        
+    return UserPublic(id=user_id, email=user.email)
+
+
+@app.post("/api/auth/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    """Fournit un token d'accès"""
+    user = await get_user(form_data.username) # form_data.username est l'email
+    
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/api/users/me", response_model=UserPublic)
+async def read_users_me(current_user: UserInDB = Depends(get_current_user)):
+    """Retourne les informations de l'utilisateur connecté"""
+    return UserPublic(id=current_user.id, email=current_user.email)
+
+
+# --- Routes Métier (Sécurisées) ---
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
 
-# Category Routes
+# Category Routes (Sécurisées)
 @app.get("/api/categories")
-async def get_categories():
-    categories = await categories_collection.find({}).to_list(None)
+async def get_categories(current_user: UserInDB = Depends(get_current_user)):
+    categories = await categories_collection.find({"user_id": current_user.id}).to_list(None)
     return [{"id": cat["id"], "name": cat["name"], "type": cat["type"], "created_at": cat["created_at"]} for cat in categories]
 
 @app.post("/api/categories")
-async def create_category(category: CategoryCreate):
+async def create_category(category: CategoryCreate, current_user: UserInDB = Depends(get_current_user)):
     category_id = str(uuid.uuid4())
     new_category_data = {
         "id": category_id,
+        "user_id": current_user.id, # Sécurisé
         "name": category.name,
         "type": category.type,
         "created_at": datetime.now(timezone.utc)
@@ -186,47 +354,56 @@ async def create_category(category: CategoryCreate):
     return new_category_data
 
 @app.put("/api/categories/{category_id}")
-async def update_category(category_id: str, category: CategoryUpdate):
-    existing = await categories_collection.find_one({"id": category_id})
+async def update_category(category_id: str, category: CategoryUpdate, current_user: UserInDB = Depends(get_current_user)):
+    existing = await categories_collection.find_one({"id": category_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
     
     update_data = {k: v for k, v in category.dict(exclude_unset=True).items()}
     if update_data:
-        await categories_collection.update_one({"id": category_id}, {"$set": update_data})
+        await categories_collection.update_one(
+            {"id": category_id, "user_id": current_user.id}, 
+            {"$set": update_data}
+        )
     
-    updated = await categories_collection.find_one({"id": category_id})
+    updated = await categories_collection.find_one({"id": category_id, "user_id": current_user.id})
     return {"id": updated["id"], "name": updated["name"], "type": updated["type"], "created_at": updated["created_at"]}
 
 @app.delete("/api/categories/{category_id}")
-async def delete_category(category_id: str):
-    existing = await categories_collection.find_one({"id": category_id})
+async def delete_category(category_id: str, current_user: UserInDB = Depends(get_current_user)):
+    existing = await categories_collection.find_one({"id": category_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
     
-    await subcategories_collection.delete_many({"category_id": category_id})
+    # Supprime les sous-catégories de l'utilisateur liées
+    await subcategories_collection.delete_many({"category_id": category_id, "user_id": current_user.id})
+    
+    # Met à jour les transactions de l'utilisateur liées
     await transactions_collection.update_many(
-        {"category_id": category_id},
+        {"category_id": category_id, "user_id": current_user.id},
         {"$set": {"category_id": None, "subcategory_id": None}}
     )
-    await categories_collection.delete_one({"id": category_id})
+    
+    await categories_collection.delete_one({"id": category_id, "user_id": current_user.id})
     return {"message": "Category deleted successfully"}
 
-# SubCategory Routes
+# SubCategory Routes (Sécurisées)
 @app.get("/api/subcategories")
-async def get_subcategories():
-    subcategories = await subcategories_collection.find({}).to_list(None)
+async def get_subcategories(current_user: UserInDB = Depends(get_current_user)):
+    subcategories = await subcategories_collection.find({"user_id": current_user.id}).to_list(None)
     return [{"id": sub["id"], "category_id": sub["category_id"], "name": sub["name"], "created_at": sub["created_at"]} for sub in subcategories]
 
 @app.post("/api/subcategories")
-async def create_subcategory(subcategory: SubCategoryCreate):
-    category = await categories_collection.find_one({"id": subcategory.category_id})
+async def create_subcategory(subcategory: SubCategoryCreate, current_user: UserInDB = Depends(get_current_user)):
+    # Vérifie que la catégorie parente appartient à l'utilisateur
+    category = await categories_collection.find_one({"id": subcategory.category_id, "user_id": current_user.id})
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
     
     subcategory_id = str(uuid.uuid4())
     new_subcategory_data = {
         "id": subcategory_id,
+        "user_id": current_user.id, # Sécurisé
         "category_id": subcategory.category_id,
         "name": subcategory.name,
         "created_at": datetime.now(timezone.utc)
@@ -235,40 +412,46 @@ async def create_subcategory(subcategory: SubCategoryCreate):
     return new_subcategory_data
 
 @app.put("/api/subcategories/{subcategory_id}")
-async def update_subcategory(subcategory_id: str, subcategory: SubCategoryUpdate):
-    existing = await subcategories_collection.find_one({"id": subcategory_id})
+async def update_subcategory(subcategory_id: str, subcategory: SubCategoryUpdate, current_user: UserInDB = Depends(get_current_user)):
+    existing = await subcategories_collection.find_one({"id": subcategory_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="SubCategory not found")
     
     update_data = {k: v for k, v in subcategory.dict(exclude_unset=True).items()}
     if update_data:
-        await subcategories_collection.update_one({"id": subcategory_id}, {"$set": update_data})
+        await subcategories_collection.update_one(
+            {"id": subcategory_id, "user_id": current_user.id}, 
+            {"$set": update_data}
+        )
     
-    updated = await subcategories_collection.find_one({"id": subcategory_id})
+    updated = await subcategories_collection.find_one({"id": subcategory_id, "user_id": current_user.id})
     return {"id": updated["id"], "category_id": updated["category_id"], "name": updated["name"], "created_at": updated["created_at"]}
 
 @app.delete("/api/subcategories/{subcategory_id}")
-async def delete_subcategory(subcategory_id: str):
-    existing = await subcategories_collection.find_one({"id": subcategory_id})
+async def delete_subcategory(subcategory_id: str, current_user: UserInDB = Depends(get_current_user)):
+    existing = await subcategories_collection.find_one({"id": subcategory_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="SubCategory not found")
     
+    # Met à jour les transactions de l'utilisateur liées
     await transactions_collection.update_many(
-        {"subcategory_id": subcategory_id},
+        {"subcategory_id": subcategory_id, "user_id": current_user.id},
         {"$set": {"subcategory_id": None}}
     )
-    await subcategories_collection.delete_one({"id": subcategory_id})
+    
+    await subcategories_collection.delete_one({"id": subcategory_id, "user_id": current_user.id})
     return {"message": "SubCategory deleted successfully"}
 
-# Transaction Routes
+# Transaction Routes (Sécurisées)
 @app.get("/api/transactions")
 async def get_transactions(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     category_id: Optional[str] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    current_user: UserInDB = Depends(get_current_user)
 ):
-    query = {}
+    query = {"user_id": current_user.id} # Sécurisé
     
     if start_date and end_date:
         query["date"] = {
@@ -295,10 +478,11 @@ async def get_transactions(
     } for t in transactions]
 
 @app.post("/api/transactions")
-async def create_transaction(transaction: TransactionCreate):
+async def create_transaction(transaction: TransactionCreate, current_user: UserInDB = Depends(get_current_user)):
     transaction_id = str(uuid.uuid4())
     new_transaction_data = {
         "id": transaction_id,
+        "user_id": current_user.id, # Sécurisé
         "date": transaction.date,
         "amount": transaction.amount,
         "type": transaction.type,
@@ -311,12 +495,13 @@ async def create_transaction(transaction: TransactionCreate):
     return new_transaction_data
 
 @app.post("/api/transactions/bulk")
-async def create_bulk_transactions(data: TransactionBulk):
+async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB = Depends(get_current_user)):
     new_transactions_data = []
     for transaction in data.transactions:
         transaction_id = str(uuid.uuid4())
         new_transaction_data = {
             "id": transaction_id,
+            "user_id": current_user.id, # Sécurisé
             "date": transaction.date,
             "amount": transaction.amount,
             "type": transaction.type,
@@ -337,16 +522,19 @@ async def create_bulk_transactions(data: TransactionBulk):
         raise HTTPException(status_code=500, detail=f"An error occurred during bulk insert: {e}")
 
 @app.put("/api/transactions/{transaction_id}")
-async def update_transaction(transaction_id: str, transaction: TransactionUpdate):
-    existing = await transactions_collection.find_one({"id": transaction_id})
+async def update_transaction(transaction_id: str, transaction: TransactionUpdate, current_user: UserInDB = Depends(get_current_user)):
+    existing = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Transaction not found")
     
     update_data = {k: v for k, v in transaction.dict(exclude_unset=True).items()}
     if update_data:
-        await transactions_collection.update_one({"id": transaction_id}, {"$set": update_data})
+        await transactions_collection.update_one(
+            {"id": transaction_id, "user_id": current_user.id}, 
+            {"$set": update_data}
+        )
     
-    updated = await transactions_collection.find_one({"id": transaction_id})
+    updated = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
     return {
         "id": updated["id"],
         "date": updated["date"],
@@ -359,18 +547,18 @@ async def update_transaction(transaction_id: str, transaction: TransactionUpdate
     }
 
 @app.delete("/api/transactions/{transaction_id}")
-async def delete_transaction(transaction_id: str):
-    existing = await transactions_collection.find_one({"id": transaction_id})
+async def delete_transaction(transaction_id: str, current_user: UserInDB = Depends(get_current_user)):
+    existing = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Transaction not found")
     
-    await transactions_collection.delete_one({"id": transaction_id})
+    await transactions_collection.delete_one({"id": transaction_id, "user_id": current_user.id})
     return {"message": "Transaction deleted successfully"}
 
-# Recurring Transaction Routes
+# Recurring Transaction Routes (Sécurisées)
 @app.get("/api/recurring-transactions")
-async def get_recurring_transactions():
-    recurring = await recurring_transactions_collection.find({}).to_list(None)
+async def get_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
+    recurring = await recurring_transactions_collection.find({"user_id": current_user.id}).to_list(None)
     return [{
         "id": r["id"],
         "amount": r["amount"],
@@ -384,10 +572,11 @@ async def get_recurring_transactions():
     } for r in recurring]
 
 @app.post("/api/recurring-transactions")
-async def create_recurring_transaction(recurring: RecurringTransactionCreate):
+async def create_recurring_transaction(recurring: RecurringTransactionCreate, current_user: UserInDB = Depends(get_current_user)):
     recurring_id = str(uuid.uuid4())
     new_recurring_data = {
         "id": recurring_id,
+        "user_id": current_user.id, # Sécurisé
         "amount": recurring.amount,
         "type": recurring.type,
         "description": recurring.description,
@@ -401,16 +590,19 @@ async def create_recurring_transaction(recurring: RecurringTransactionCreate):
     return new_recurring_data
 
 @app.put("/api/recurring-transactions/{recurring_id}")
-async def update_recurring_transaction(recurring_id: str, recurring: RecurringTransactionUpdate):
-    existing = await recurring_transactions_collection.find_one({"id": recurring_id})
+async def update_recurring_transaction(recurring_id: str, recurring: RecurringTransactionUpdate, current_user: UserInDB = Depends(get_current_user)):
+    existing = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
     
     update_data = {k: v for k, v in recurring.dict(exclude_unset=True).items()}
     if update_data:
-        await recurring_transactions_collection.update_one({"id": recurring_id}, {"$set": update_data})
+        await recurring_transactions_collection.update_one(
+            {"id": recurring_id, "user_id": current_user.id}, 
+            {"$set": update_data}
+        )
     
-    updated = await recurring_transactions_collection.find_one({"id": recurring_id})
+    updated = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
     return {
         "id": updated["id"],
         "amount": updated["amount"],
@@ -424,28 +616,30 @@ async def update_recurring_transaction(recurring_id: str, recurring: RecurringTr
     }
 
 @app.delete("/api/recurring-transactions/{recurring_id}")
-async def delete_recurring_transaction(recurring_id: str):
-    existing = await recurring_transactions_collection.find_one({"id": recurring_id})
+async def delete_recurring_transaction(recurring_id: str, current_user: UserInDB = Depends(get_current_user)):
+    existing = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
     
-    await recurring_transactions_collection.delete_one({"id": recurring_id})
+    await recurring_transactions_collection.delete_one({"id": recurring_id, "user_id": current_user.id})
     return {"message": "Recurring transaction deleted successfully"}
 
 @app.post("/api/recurring-transactions/generate")
-async def generate_recurring_transactions():
-    """Manually generate recurring transactions for the current month"""
+async def generate_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
+    """Génère les transactions récurrentes de l'utilisateur pour le mois actuel"""
     now = datetime.now(timezone.utc)
     current_month = now.month
     current_year = now.year
     current_day = now.day
     
-    recurring_list = await recurring_transactions_collection.find({}).to_list(None)
+    recurring_list = await recurring_transactions_collection.find({"user_id": current_user.id}).to_list(None)
     generated_count = 0
     
     for recurring in recurring_list:
         if recurring["frequency"] == "Mensuel" and current_day >= recurring["day_of_month"]:
+            # Vérifie si une transaction similaire existe DEJA pour CE MOIS et CET UTILISATEUR
             existing = await transactions_collection.find_one({
+                "user_id": current_user.id, # Sécurisé
                 "description": recurring.get("description"),
                 "amount": recurring["amount"],
                 "type": recurring["type"],
@@ -460,6 +654,7 @@ async def generate_recurring_transactions():
                 transaction_date = datetime(current_year, current_month, recurring["day_of_month"], tzinfo=timezone.utc)
                 await transactions_collection.insert_one({
                     "id": transaction_id,
+                    "user_id": current_user.id, # Sécurisé
                     "date": transaction_date,
                     "amount": recurring["amount"],
                     "type": recurring["type"],
@@ -472,27 +667,29 @@ async def generate_recurring_transactions():
     
     return {"message": f"{generated_count} transactions generated", "count": generated_count}
 
-# Dashboard Statistics
+# Dashboard Statistics (Sécurisé)
 @app.get("/api/dashboard/stats")
-async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] = None):
+async def get_dashboard_stats(
+    year: Optional[int] = None, 
+    month: Optional[int] = None, 
+    current_user: UserInDB = Depends(get_current_user)
+):
     now = datetime.now(timezone.utc)
     
-    # --- NOUVEAU : Calcul de l'épargne globale ---
+    # --- Épargne globale (pour l'utilisateur) ---
     global_revenus = 0
     global_depenses = 0
     
-    # Agrégation pour sommer tous les revenus
     pipeline_revenus = [
-        {"$match": {"type": "Revenu"}},
+        {"$match": {"type": "Revenu", "user_id": current_user.id}}, # Sécurisé
         {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
     ]
     revenus_result = await transactions_collection.aggregate(pipeline_revenus).to_list(None)
     if revenus_result:
         global_revenus = revenus_result[0]['total']
 
-    # Agrégation pour sommer toutes les dépenses
     pipeline_depenses = [
-        {"$match": {"type": "Dépense"}},
+        {"$match": {"type": "Dépense", "user_id": current_user.id}}, # Sécurisé
         {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
     ]
     depenses_result = await transactions_collection.aggregate(pipeline_depenses).to_list(None)
@@ -500,13 +697,12 @@ async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] =
         global_depenses = depenses_result[0]['total']
 
     global_epargne_totale = global_revenus - global_depenses
-    # --- FIN DU NOUVEAU CALCUL ---
+    # --- Fin Épargne globale ---
 
     target_year = year if year else now.year
     display_period = str(target_year)
     
     if month and month != "all":
-        # Calcule les stats pour un mois spécifique
         target_month = month
         start_date = datetime(target_year, target_month, 1, tzinfo=timezone.utc)
         if target_month == 12:
@@ -514,29 +710,29 @@ async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] =
         else:
             end_date = datetime(target_year, target_month + 1, 1, tzinfo=timezone.utc)
         
-        # Trouve le nom du mois pour l'affichage
         month_names_full = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
         display_period = f"{month_names_full[target_month - 1]} {target_year}"
     else:
-        # Calcule les stats pour l'année entière
         start_date = datetime(target_year, 1, 1, tzinfo=timezone.utc)
         end_date = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
 
-    # 1. Calculer les cartes de stats (Revenus, Dépenses, Épargne)
+    # 1. Stats Période
     period_transactions = await transactions_collection.find({
-        "date": {"$gte": start_date, "$lt": end_date}
+        "date": {"$gte": start_date, "$lt": end_date},
+        "user_id": current_user.id # Sécurisé
     }).to_list(None)
     
     revenus = sum(t["amount"] for t in period_transactions if t["type"] == "Revenu")
     depenses = sum(t["amount"] for t in period_transactions if t["type"] == "Dépense")
     epargne = revenus - depenses
     
-    # 2. Calculer le graphique Camembert (Répartition des dépenses)
+    # 2. Camembert Dépenses
     pipeline = [
         {
             "$match": {
                 "date": {"$gte": start_date, "$lt": end_date},
-                "type": "Dépense"
+                "type": "Dépense",
+                "user_id": current_user.id # Sécurisé
             }
         },
         {
@@ -567,7 +763,7 @@ async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] =
     expense_breakdown_cursor = transactions_collection.aggregate(pipeline)
     expense_breakdown = await expense_breakdown_cursor.to_list(None)
 
-    # 3. Calculer le graphique en Barres (Toujours les 12 mois de l'année cible)
+    # 3. Graphique Barres
     monthly_data = []
     month_names = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
     
@@ -580,7 +776,8 @@ async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] =
             month_end = datetime(target_year, month_num + 1, 1, tzinfo=timezone.utc)
         
         month_transactions = await transactions_collection.find({
-            "date": {"$gte": month_start, "$lt": month_end}
+            "date": {"$gte": month_start, "$lt": month_end},
+            "user_id": current_user.id # Sécurisé
         }).to_list(None)
         
         month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Revenu")
@@ -599,9 +796,10 @@ async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] =
         "monthly_data": monthly_data,
         "expense_breakdown": expense_breakdown,
         "display_period": display_period,
-        "global_epargne_totale": global_epargne_totale # <-- Ajout de la nouvelle stat
+        "global_epargne_totale": global_epargne_totale
     }
 
+# Lancement du serveur (Identique)
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
