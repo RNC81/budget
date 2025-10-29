@@ -48,7 +48,11 @@ function Dashboard() {
         params.month = selectedMonth;
       }
       
-      const response = await api.get('/api/dashboard/stats');
+      // --- CORRECTION ICI ---
+      // On envoie bien l'objet 'params' avec la requête
+      const response = await api.get('/api/dashboard/stats', { params: params });
+      // --- FIN CORRECTION ---
+
       setStats(response.data);
     } catch (error) {
       console.error('Error fetching stats:', error);
@@ -245,10 +249,6 @@ function Dashboard() {
                     cy="50%"
                     outerRadius={120}
                     fill="#8884d8"
-                    // --- LIGNES SUPPRIMÉES ---
-                    // labelLine={false}
-                    // label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-                    // --- FIN DES LIGNES SUPPRIMÉES ---
                   >
                     {stats.expense_breakdown.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
