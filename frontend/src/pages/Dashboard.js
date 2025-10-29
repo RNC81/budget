@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-import { TrendingUp, TrendingDown, Wallet, Plus, Loader } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank } from 'lucide-react'; // Ajout de PiggyBank
 import TransactionModal from '../components/TransactionModal';
 
 // Couleurs pour le graphique camembert
@@ -33,14 +33,11 @@ function Dashboard() {
   const [showModal, setShowModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // --- NOUVEAUX ÉTATS POUR LES FILTRES ---
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1); // +1 car les mois JS sont 0-11
-  // ---
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
 
   useEffect(() => {
     fetchStats();
-    // Re-déclenche le fetch si la clé, l'année ou le mois changent
   }, [refreshKey, selectedYear, selectedMonth]);
 
   const fetchStats = async () => {
@@ -74,6 +71,7 @@ function Dashboard() {
   }
 
   const epargnePositive = stats?.epargne_total >= 0;
+  const globalEpargnePositive = stats?.global_epargne_totale >= 0;
   const hasExpenseData = stats?.expense_breakdown && stats.expense_breakdown.length > 0;
   const displayPeriod = stats?.display_period || 'Mois en cours';
 
@@ -96,7 +94,7 @@ function Dashboard() {
         </button>
       </div>
 
-      {/* --- NOUVEAUX FILTRES --- */}
+      {/* Filtres */}
       <div className="bg-white rounded-2xl shadow-lg p-4 border border-gray-100">
         <div className="flex flex-col sm:flex-row gap-4">
           <div>
@@ -127,11 +125,10 @@ function Dashboard() {
           </div>
         </div>
       </div>
-      {/* --- FIN NOUVEAUX FILTRES --- */}
 
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Stats Cards - MODIFIÉ POUR 4 COLONNES */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* Revenus */}
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow">
           <div className="flex items-center justify-between">
@@ -162,13 +159,13 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Épargne */}
+        {/* Épargne (Période) */}
         <div className={`bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow ${
           epargnePositive ? 'ring-2 ring-success-200' : 'ring-2 ring-red-200'
         }`}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Épargne</p>
+              <p className="text-sm font-medium text-gray-600 mb-1">Épargne ({displayPeriod})</p>
               <p className={`text-3xl font-bold ${epargnePositive ? 'text-success-600' : 'text-red-600'}`}>
                 {stats?.epargne_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
               </p>
@@ -178,9 +175,31 @@ function Dashboard() {
             </div>
           </div>
           <p className="text-xs text-gray-500 mt-2">
-            {epargnePositive ? '🎉 Excellent travail !' : '⚠️ Attention aux dépenses'}
+            {epargnePositive ? '🎉 Positif !' : '⚠️ Négatif'}
           </p>
         </div>
+
+        {/* --- NOUVELLE CARTE : ÉPARGNE GLOBALE --- */}
+        <div className={`bg-white rounded-2xl shadow-lg p-6 border-2 ${
+          globalEpargnePositive ? 'border-primary-300' : 'border-red-300'
+        } hover:shadow-xl transition-shadow`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600 mb-1">Épargne Globale</p>
+              <p className={`text-3xl font-bold ${globalEpargnePositive ? 'text-primary-600' : 'text-red-600'}`}>
+                {stats?.global_epargne_totale?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+              </p>
+            </div>
+            <div className={`${globalEpargnePositive ? 'bg-primary-100' : 'bg-red-100'} rounded-full p-3`}>
+              <PiggyBank className={`h-8 w-8 ${globalEpargnePositive ? 'text-primary-600' : 'text-red-600'}`} />
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Total de tout votre historique
+          </p>
+        </div>
+        {/* --- FIN NOUVELLE CARTE --- */}
+
       </div>
 
       {/* Conteneur pour les graphiques */}

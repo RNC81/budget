@@ -472,15 +472,40 @@ async def generate_recurring_transactions():
     
     return {"message": f"{generated_count} transactions generated", "count": generated_count}
 
-# --- ENDPOINT DU TABLEAU DE BORD MODIFIÉ ---
+# Dashboard Statistics
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] = None):
     now = datetime.now(timezone.utc)
     
+    # --- NOUVEAU : Calcul de l'épargne globale ---
+    global_revenus = 0
+    global_depenses = 0
+    
+    # Agrégation pour sommer tous les revenus
+    pipeline_revenus = [
+        {"$match": {"type": "Revenu"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    revenus_result = await transactions_collection.aggregate(pipeline_revenus).to_list(None)
+    if revenus_result:
+        global_revenus = revenus_result[0]['total']
+
+    # Agrégation pour sommer toutes les dépenses
+    pipeline_depenses = [
+        {"$match": {"type": "Dépense"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+    ]
+    depenses_result = await transactions_collection.aggregate(pipeline_depenses).to_list(None)
+    if depenses_result:
+        global_depenses = depenses_result[0]['total']
+
+    global_epargne_totale = global_revenus - global_depenses
+    # --- FIN DU NOUVEAU CALCUL ---
+
     target_year = year if year else now.year
     display_period = str(target_year)
     
-    if month:
+    if month and month != "all":
         # Calcule les stats pour un mois spécifique
         target_month = month
         start_date = datetime(target_year, target_month, 1, tzinfo=timezone.utc)
@@ -488,7 +513,10 @@ async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] =
             end_date = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
         else:
             end_date = datetime(target_year, target_month + 1, 1, tzinfo=timezone.utc)
-        display_period = start_date.strftime("%B %Y") # ex: "Octobre 2025"
+        
+        # Trouve le nom du mois pour l'affichage
+        month_names_full = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
+        display_period = f"{month_names_full[target_month - 1]} {target_year}"
     else:
         # Calcule les stats pour l'année entière
         start_date = datetime(target_year, 1, 1, tzinfo=timezone.utc)
@@ -570,9 +598,9 @@ async def get_dashboard_stats(year: Optional[int] = None, month: Optional[int] =
         "epargne_total": epargne,
         "monthly_data": monthly_data,
         "expense_breakdown": expense_breakdown,
-        "display_period": display_period # Envoie la période d'affichage
+        "display_period": display_period,
+        "global_epargne_totale": global_epargne_totale # <-- Ajout de la nouvelle stat
     }
-# --- FIN DE L'ENDPOINT MODIFIÉ ---
 
 if __name__ == "__main__":
     import uvicorn
