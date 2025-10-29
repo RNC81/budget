@@ -7,8 +7,14 @@ import {
 import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank } from 'lucide-react';
 import TransactionModal from '../components/TransactionModal';
 
-// Couleurs pour le graphique camembert
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#E36414', '#9A348E'];
+// --- MODIFICATION ICI ---
+// Couleurs pour le graphique camembert (15 couleurs)
+const COLORS = [
+  '#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', 
+  '#E36414', '#9A348E', '#FF0000', '#3E619B', '#48A9A6',
+  '#E4B7E5', '#FB9F89', '#B9E28C', '#F1E189', '#94C9F1'
+];
+// --- FIN MODIFICATION ---
 
 const years = [2025, 2024, 2023]; // Tu peux ajouter plus d'années ici
 const months = [
