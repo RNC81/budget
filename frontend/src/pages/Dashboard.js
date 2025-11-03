@@ -4,34 +4,28 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar } from 'lucide-react';
 import TransactionModal from '../components/TransactionModal';
 
-// --- MODIFICATION ICI ---
+// --- NOUVELLES IMPORTATIONS ---
+import DatePicker, { registerLocale } from 'react-datepicker';
+import { format } from 'date-fns';
+import { fr } from 'date-fns/locale/fr';
+import 'react-datepicker/dist/react-datepicker.css';
+
+// Enregistre la langue française pour le calendrier
+registerLocale('fr', fr);
+// --- FIN DES NOUVELLES IMPORTATIONS ---
+
+
 // Couleurs pour le graphique camembert (15 couleurs)
 const COLORS = [
   '#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', 
   '#E36414', '#9A348E', '#FF0000', '#3E619B', '#48A9A6',
   '#E4B7E5', '#FB9F89', '#B9E28C', '#F1E189', '#94C9F1'
 ];
-// --- FIN MODIFICATION ---
 
-const years = [2025, 2024, 2023]; // Tu peux ajouter plus d'années ici
-const months = [
-  { value: 'all', name: 'Toute l\'année' },
-  { value: 1, name: 'Janvier' },
-  { value: 2, name: 'Février' },
-  { value: 3, name: 'Mars' },
-  { value: 4, name: 'Avril' },
-  { value: 5, name: 'Mai' },
-  { value: 6, name: 'Juin' },
-  { value: 7, name: 'Juillet' },
-  { value: 8, name: 'Août' },
-  { value: 9, name: 'Septembre' },
-  { value: 10, name: 'Octobre' },
-  { value: 11, name: 'Novembre' },
-  { value: 12, name: 'Décembre' },
-];
+// --- Suppression des listes 'years' et 'months' ---
 
 function Dashboard() {
   const [stats, setStats] = useState(null);
@@ -39,26 +33,36 @@ function Dashboard() {
   const [showModal, setShowModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+  // --- NOUVELLE GESTION D'ÉTAT POUR LES DATES ---
+  // Par défaut, on affiche le mois en cours
+  const [startDate, setStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [endDate, setEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0));
+  // --- FIN NOUVELLE GESTION D'ÉTAT ---
 
   useEffect(() => {
     fetchStats();
-  }, [refreshKey, selectedYear, selectedMonth]);
+  // Dépendance aux nouvelles dates
+  }, [refreshKey, startDate, endDate]); 
 
   const fetchStats = async () => {
     setLoading(true);
-    try {
-      const params = { year: selectedYear };
-      if (selectedMonth !== 'all') {
-        params.month = selectedMonth;
-      }
-      
-      // --- CORRECTION ICI ---
-      // On envoie bien l'objet 'params' avec la requête
-      const response = await api.get('/api/dashboard/stats', { params: params });
-      // --- FIN CORRECTION ---
+    
+    // Garde-fou si les dates ne sont pas valides
+    if (!startDate || !endDate) {
+      setLoading(false);
+      return;
+    }
 
+    try {
+      // --- NOUVELLE LOGIQUE DE PARAMS ---
+      // Formate les dates en YYYY-MM-DD pour l'API
+      const params = {
+        start_date_str: format(startDate, 'yyyy-MM-dd'),
+        end_date_str: format(endDate, 'yyyy-MM-dd')
+      };
+      // --- FIN NOUVELLE LOGIQUE DE PARAMS ---
+      
+      const response = await api.get('/api/dashboard/stats', { params: params });
       setStats(response.data);
     } catch (error) {
       console.error('Error fetching stats:', error);
@@ -83,7 +87,12 @@ function Dashboard() {
   const epargnePositive = stats?.epargne_total >= 0;
   const globalEpargnePositive = stats?.global_epargne_totale >= 0;
   const hasExpenseData = stats?.expense_breakdown && stats.expense_breakdown.length > 0;
-  const displayPeriod = stats?.display_period || 'Mois en cours';
+  
+  // displayPeriod vient maintenant du backend (ex: "01/11/2025 - 30/11/2025")
+  const displayPeriod = stats?.display_period || 'Période sélectionnée';
+  
+  // L'année pour le graphique en barres est basée sur la date de début
+  const displayYear = startDate ? startDate.getFullYear() : new Date().getFullYear();
 
   return (
     <div className="space-y-8">
@@ -104,37 +113,52 @@ function Dashboard() {
         </button>
       </div>
 
-      {/* Filtres */}
+      {/* --- NOUVEAUX FILTRES --- */}
       <div className="bg-white rounded-2xl shadow-lg p-4 border border-gray-100">
         <div className="flex flex-col sm:flex-row gap-4">
-          <div>
-            <label htmlFor="year-select" className="block text-sm font-medium text-gray-700 mb-1">Année</label>
-            <select
-              id="year-select"
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-              className="w-full sm:w-auto px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-            >
-              {years.map(year => (
-                <option key={year} value={year}>{year}</option>
-              ))}
-            </select>
+          
+          {/* Sélecteur Date de Début */}
+          <div className="flex-1 min-w-[150px]">
+            <label htmlFor="start-date" className="block text-sm font-medium text-gray-700 mb-1">Date de début</label>
+            <div className="relative">
+              <DatePicker
+                id="start-date"
+                selected={startDate}
+                onChange={(date) => setStartDate(date)}
+                selectsStart
+                startDate={startDate}
+                endDate={endDate}
+                locale="fr"
+                dateFormat="dd/MM/yyyy"
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+              />
+              <Calendar className="h-4 w-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
           </div>
-          <div>
-            <label htmlFor="month-select" className="block text-sm font-medium text-gray-700 mb-1">Mois</label>
-            <select
-              id="month-select"
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value === 'all' ? 'all' : parseInt(e.target.value))}
-              className="w-full sm:w-auto px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-            >
-              {months.map(month => (
-                <option key={month.value} value={month.value}>{month.name}</option>
-              ))}
-            </select>
+          
+          {/* Sélecteur Date de Fin */}
+          <div className="flex-1 min-w-[150px]">
+            <label htmlFor="end-date" className="block text-sm font-medium text-gray-700 mb-1">Date de fin</label>
+            <div className="relative">
+              <DatePicker
+                id="end-date"
+                selected={endDate}
+                onChange={(date) => setEndDate(date)}
+                selectsEnd
+                startDate={startDate}
+                endDate={endDate}
+                minDate={startDate}
+                locale="fr"
+                dateFormat="dd/MM/yyyy"
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+              />
+              <Calendar className="h-4 w-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
           </div>
+
         </div>
       </div>
+      {/* --- FIN NOUVEAUX FILTRES --- */}
 
 
       {/* Stats Cards */}
@@ -175,7 +199,8 @@ function Dashboard() {
         }`}>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600 mb-1">Épargne ({displayPeriod})</p>
+              {/* Titre dynamique */}
+              <p className="text-sm font-medium text-gray-600 mb-1">Épargne (Période)</p>
               <p className={`text-3xl font-bold ${epargnePositive ? 'text-success-600' : 'text-red-600'}`}>
                 {stats?.epargne_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
               </p>
@@ -184,8 +209,9 @@ function Dashboard() {
               <Wallet className={`h-8 w-8 ${epargnePositive ? 'text-success-600' : 'text-red-600'}`} />
             </div>
           </div>
-          <p className="text-xs text-gray-500 mt-2">
-            {epargnePositive ? '🎉 Positif !' : '⚠️ Négatif'}
+           {/* Affichage de la période sur la carte (optionnel) */}
+          <p className="text-xs text-gray-500 mt-2 truncate" title={displayPeriod}>
+            {displayPeriod}
           </p>
         </div>
 
@@ -216,7 +242,8 @@ function Dashboard() {
         
         {/* Graphique Barres (Titre mis à jour) */}
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-          <h2 className="text-xl font-bold text-gray-900 mb-6">Revenus vs Dépenses ({selectedYear})</h2>
+          {/* Titre utilise l'année de la date de début */}
+          <h2 className="text-xl font-bold text-gray-900 mb-6">Revenus vs Dépenses ({displayYear})</h2>
           <div className="h-96">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={stats?.monthly_data || []}>
