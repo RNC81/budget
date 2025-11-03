@@ -275,6 +275,7 @@ def send_verification_email(email: str, token: str):
         sg = SendGridAPIClient(sendgrid_api_key)
         response = sg.send(message) # C'est un appel bloquant (synchrone)
         if response.status_code >= 300: # Gère les erreurs de SendGrid
+             print(f"Erreur SendGrid: {response.body}")
              raise Exception(f"SendGrid error: {response.body}")
     except Exception as e:
         print(f"Erreur critique lors de l'envoi de l'e-mail: {e}")
@@ -372,10 +373,10 @@ async def register_user(user: UserCreate):
         "is_verified": is_first_user 
     }
     
-    await users_collection.insert_one(new_user_data)
-    
     if is_first_user:
-        # C'est le PREMIER utilisateur. On lui attribue les données orphelines.
+        # C'est le PREMIER utilisateur. On le crée ET on lui attribue les données.
+        await users_collection.insert_one(new_user_data)
+        
         await transactions_collection.update_many(
             {"user_id": {"$exists": False}},
             {"$set": {"user_id": user_id}}
@@ -393,18 +394,22 @@ async def register_user(user: UserCreate):
             {"$set": {"user_id": user_id}}
         )
     else:
-        # C'est un utilisateur suivant. On crée ses catégories ET on envoie l'e-mail.
-        await initialize_default_categories(user_id)
-        
+        # C'est un utilisateur suivant.
+        # 1. ESSAYER d'envoyer l'e-mail AVANT de créer l'utilisateur
         try:
             verification_token = create_verification_token(user.email)
             # Appel synchrone, géré par FastAPI dans un threadpool
             send_verification_email(user.email, verification_token) 
         except Exception as e:
-            # Si l'e-mail échoue, on supprime l'utilisateur pour qu'il puisse réessayer
-            await users_collection.delete_one({"id": user_id})
-            print(f"Échec de l'envoi de l'e-mail, rollback de l'utilisateur: {e}")
-            raise HTTPException(status_code=500, detail="Impossible d'envoyer l'e-mail de vérification. Veuillez réessayer plus tard.")
+            # Si l'e-mail échoue, on lève une erreur SANS créer l'utilisateur
+            print(f"Échec de l'envoi de l'e-mail, l'utilisateur n'a PAS été créé: {e}")
+            raise HTTPException(status_code=500, detail="Impossible d'envoyer l'e-mail de vérification. Vos identifiants SendGrid sont-ils corrects ?")
+        
+        # 2. Si l'e-mail a réussi, ON CRÉE l'utilisateur
+        await users_collection.insert_one(new_user_data)
+        
+        # 3. On crée ses catégories par défaut
+        await initialize_default_categories(user_id)
             
     return UserPublic(id=user_id, email=user.email)
 
