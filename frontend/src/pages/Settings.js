@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload } from 'lucide-react';
+// 1. Ajout de l'icône 'Shield'
+import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload, Shield } from 'lucide-react';
 import CategoriesTab from '../components/settings/CategoriesTab';
 import SubCategoriesTab from '../components/settings/SubCategoriesTab';
 import RecurringTransactionsTab from '../components/settings/RecurringTransactionsTab';
-import ImportTab from '../components/settings/ImportTab'; // <-- NOUVEAU
+import ImportTab from '../components/settings/ImportTab';
+// 2. Import du nouveau composant (que nous allons créer)
+import PasswordTab from '../components/settings/PasswordTab'; 
 
 function Settings() {
   const [activeTab, setActiveTab] = useState('categories');
@@ -12,7 +15,9 @@ function Settings() {
     { id: 'categories', name: 'Catégories', icon: Tag },
     { id: 'subcategories', name: 'Sous-Catégories', icon: FolderTree },
     { id: 'recurring', name: 'Transactions Récurrentes', icon: Repeat },
-    { id: 'import', name: 'Importer', icon: Upload }, // <-- NOUVEAU
+    { id: 'import', name: 'Importer', icon: Upload },
+    // 3. Ajout du nouvel onglet
+    { id: 'security', name: 'Sécurité', icon: Shield }, 
   ];
 
   return (
@@ -25,7 +30,8 @@ function Settings() {
           </div>
           <h1 className="text-3xl font-bold text-gray-900">Paramètres</h1>
         </div>
-        <p className="text-gray-600">Gérez vos catégories, transactions et importations</p>
+        {/* 4. Mise à jour de la description */}
+        <p className="text-gray-600">Gérez vos catégories, transactions, importations et sécurité</p>
       </div>
 
       {/* Tabs */}
@@ -57,7 +63,9 @@ function Settings() {
           {activeTab === 'categories' && <CategoriesTab />}
           {activeTab === 'subcategories' && <SubCategoriesTab />}
           {activeTab === 'recurring' && <RecurringTransactionsTab />}
-          {activeTab === 'import' && <ImportTab />} {/* <-- NOUVEAU */}
+          {activeTab === 'import' && <ImportTab />}
+          {/* 5. Rendu du nouveau composant */}
+          {activeTab === 'security' && <PasswordTab />} 
         </div>
       </div>
     </div>

@@ -167,6 +167,17 @@ class RecurringTransactionUpdate(BaseModel):
 class TransactionBulk(BaseModel):
     transactions: List[TransactionCreate]
 
+# ---
+# --- DÉBUT DE LA MODIFICATION (Ajout Modèle) ---
+# ---
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+# ---
+# --- FIN DE LA MODIFICATION ---
+# ---
+
+
 # --- Utilitaires de Sécurité (Nouveau) ---
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -326,6 +337,44 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 async def read_users_me(current_user: UserInDB = Depends(get_current_user)):
     """Retourne les informations de l'utilisateur connecté"""
     return UserPublic(id=current_user.id, email=current_user.email)
+
+# ---
+# --- DÉBUT DE LA MODIFICATION (Ajout Endpoint) ---
+# ---
+@app.put("/api/users/me/change-password")
+async def change_password(
+    password_data: PasswordChangeRequest, 
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """Modifie le mot de passe de l'utilisateur connecté"""
+    
+    # 1. Vérifier si l'ancien mot de passe est correct
+    if not verify_password(password_data.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect current password",
+        )
+        
+    # 2. (Optionnel) Validation de la longueur du nouveau mot de passe
+    if len(password_data.new_password) < 8:
+         raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 8 characters long",
+        )
+            
+    # 3. Hacher le nouveau mot de passe
+    new_hashed_password = get_password_hash(password_data.new_password)
+    
+    # 4. Mettre à jour le mot de passe dans la base de données
+    await users_collection.update_one(
+        {"id": current_user.id},
+        {"$set": {"hashed_password": new_hashed_password}}
+    )
+    
+    return {"message": "Password updated successfully"}
+# ---
+# --- FIN DE LA MODIFICATION ---
+# ---
 
 
 # --- Routes Métier (Sécurisées) ---
@@ -668,7 +717,7 @@ async def generate_recurring_transactions(current_user: UserInDB = Depends(get_c
     return {"message": f"{generated_count} transactions generated", "count": generated_count}
 
 # ---
-# --- DÉBUT DE LA MODIFICATION ---
+# --- DÉBUT DE LA MODIFICATION (Dashboard) ---
 # ---
 
 # Dashboard Statistics (Sécurisé)
@@ -824,7 +873,7 @@ async def get_dashboard_stats(
         "global_epargne_totale": global_epargne_totale
     }
 # ---
-# --- FIN DE LA MODIFICATION ---
+# --- FIN DE LA MODIFICATION (Dashboard) ---
 # ---
 
 
