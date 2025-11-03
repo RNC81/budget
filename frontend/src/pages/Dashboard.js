@@ -4,28 +4,45 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar, Filter } from 'lucide-react'; // Ajout de l'icône Filter
 import TransactionModal from '../components/TransactionModal';
 
-// --- NOUVELLES IMPORTATIONS ---
 import DatePicker, { registerLocale } from 'react-datepicker';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale/fr';
 import 'react-datepicker/dist/react-datepicker.css';
 
-// Enregistre la langue française pour le calendrier
 registerLocale('fr', fr);
-// --- FIN DES NOUVELLES IMPORTATIONS ---
 
-
-// Couleurs pour le graphique camembert (15 couleurs)
 const COLORS = [
   '#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', 
   '#E36414', '#9A348E', '#FF0000', '#3E619B', '#48A9A6',
   '#E4B7E5', '#FB9F89', '#B9E28C', '#F1E189', '#94C9F1'
 ];
 
-// --- Suppression des listes 'years' et 'months' ---
+/**
+ * Fonction d'initialisation pour lire le localStorage.
+ */
+const getInitialStartDate = () => {
+  const savedDate = localStorage.getItem('dashboardStartDate');
+  // Si la date sauvegardée existe ET est une date valide, on la parse.
+  // Le `new Date(savedDate)` peut retourner "Invalid Date" si le format est corrompu.
+  if (savedDate && !isNaN(new Date(savedDate))) {
+    return new Date(savedDate);
+  }
+  // Défaut : premier jour du mois en cours
+  return new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+};
+
+const getInitialEndDate = () => {
+  const savedDate = localStorage.getItem('dashboardEndDate');
+  if (savedDate && !isNaN(new Date(savedDate))) {
+    return new Date(savedDate);
+  }
+  // Défaut : dernier jour du mois en cours
+  return new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+};
+
 
 function Dashboard() {
   const [stats, setStats] = useState(null);
@@ -33,34 +50,39 @@ function Dashboard() {
   const [showModal, setShowModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // --- NOUVELLE GESTION D'ÉTAT POUR LES DATES ---
-  // Par défaut, on affiche le mois en cours
-  const [startDate, setStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-  const [endDate, setEndDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0));
+  // --- NOUVELLE GESTION D'ÉTAT POUR LES FILTRES ---
+  
+  // 1. "appliedParams" : L'état qui déclenche l'API. Initialisé depuis localStorage.
+  const [appliedParams, setAppliedParams] = useState(() => ({
+    start: getInitialStartDate(),
+    end: getInitialEndDate(),
+  }));
+
+  // 2. "formDate" : L'état temporaire du formulaire, pour ne pas rafraîchir en tapant.
+  const [formStartDate, setFormStartDate] = useState(appliedParams.start);
+  const [formEndDate, setFormEndDate] = useState(appliedParams.end);
+  
   // --- FIN NOUVELLE GESTION D'ÉTAT ---
 
   useEffect(() => {
     fetchStats();
-  // Dépendance aux nouvelles dates
-  }, [refreshKey, startDate, endDate]); 
+  // Dépend de refreshKey (pour le modal) et des "appliedParams" (filtre)
+  }, [refreshKey, appliedParams]); 
 
   const fetchStats = async () => {
     setLoading(true);
     
     // Garde-fou si les dates ne sont pas valides
-    if (!startDate || !endDate) {
+    if (!appliedParams.start || !appliedParams.end) {
       setLoading(false);
       return;
     }
 
     try {
-      // --- NOUVELLE LOGIQUE DE PARAMS ---
-      // Formate les dates en YYYY-MM-DD pour l'API
       const params = {
-        start_date_str: format(startDate, 'yyyy-MM-dd'),
-        end_date_str: format(endDate, 'yyyy-MM-dd')
+        start_date_str: format(appliedParams.start, 'yyyy-MM-dd'),
+        end_date_str: format(appliedParams.end, 'yyyy-MM-dd')
       };
-      // --- FIN NOUVELLE LOGIQUE DE PARAMS ---
       
       const response = await api.get('/api/dashboard/stats', { params: params });
       setStats(response.data);
@@ -69,6 +91,22 @@ function Dashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * NOUVELLE FONCTION : Appliquer les filtres
+   * Déclenchée par le bouton "Appliquer".
+   */
+  const handleApplyFilter = () => {
+    // 1. Sauvegarder les dates du formulaire dans localStorage
+    localStorage.setItem('dashboardStartDate', formStartDate.toISOString());
+    localStorage.setItem('dashboardEndDate', formEndDate.toISOString());
+    
+    // 2. Mettre à jour "appliedParams", ce qui va déclencher le useEffect
+    setAppliedParams({
+      start: formStartDate,
+      end: formEndDate,
+    });
   };
 
   const handleTransactionAdded = () => {
@@ -88,11 +126,10 @@ function Dashboard() {
   const globalEpargnePositive = stats?.global_epargne_totale >= 0;
   const hasExpenseData = stats?.expense_breakdown && stats.expense_breakdown.length > 0;
   
-  // displayPeriod vient maintenant du backend (ex: "01/11/2025 - 30/11/2025")
   const displayPeriod = stats?.display_period || 'Période sélectionnée';
   
-  // L'année pour le graphique en barres est basée sur la date de début
-  const displayYear = startDate ? startDate.getFullYear() : new Date().getFullYear();
+  // L'année pour le graphique en barres est basée sur la date de DÉBUT appliquée
+  const displayYear = appliedParams.start ? appliedParams.start.getFullYear() : new Date().getFullYear();
 
   return (
     <div className="space-y-8">
@@ -113,9 +150,9 @@ function Dashboard() {
         </button>
       </div>
 
-      {/* --- NOUVEAUX FILTRES --- */}
+      {/* --- FILTRES MIS À JOUR --- */}
       <div className="bg-white rounded-2xl shadow-lg p-4 border border-gray-100">
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex flex-col sm:flex-row gap-4 items-end">
           
           {/* Sélecteur Date de Début */}
           <div className="flex-1 min-w-[150px]">
@@ -123,11 +160,12 @@ function Dashboard() {
             <div className="relative">
               <DatePicker
                 id="start-date"
-                selected={startDate}
-                onChange={(date) => setStartDate(date)}
+                selected={formStartDate}
+                // Met à jour l'état du FORMULAIRE, pas l'état appliqué
+                onChange={(date) => setFormStartDate(date)} 
                 selectsStart
-                startDate={startDate}
-                endDate={endDate}
+                startDate={formStartDate}
+                endDate={formEndDate}
                 locale="fr"
                 dateFormat="dd/MM/yyyy"
                 className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
@@ -142,12 +180,13 @@ function Dashboard() {
             <div className="relative">
               <DatePicker
                 id="end-date"
-                selected={endDate}
-                onChange={(date) => setEndDate(date)}
+                selected={formEndDate}
+                // Met à jour l'état du FORMULAIRE, pas l'état appliqué
+                onChange={(date) => setFormEndDate(date)} 
                 selectsEnd
-                startDate={startDate}
-                endDate={endDate}
-                minDate={startDate}
+                startDate={formStartDate}
+                endDate={formEndDate}
+                minDate={formStartDate}
                 locale="fr"
                 dateFormat="dd/MM/yyyy"
                 className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
@@ -155,10 +194,22 @@ function Dashboard() {
               <Calendar className="h-4 w-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
+          
+          {/* NOUVEAU BOUTON "APPLIQUER" */}
+          <div className="flex-shrink-0 w-full sm:w-auto">
+            <button
+              onClick={handleApplyFilter}
+              disabled={!formStartDate || !formEndDate}
+              className="w-full sm:w-auto bg-primary-600 text-white px-5 py-2.5 rounded-lg font-semibold hover:bg-primary-700 transition-all duration-200 flex items-center justify-center space-x-2 disabled:opacity-50"
+            >
+              <Filter className="h-5 w-5" />
+              <span>Appliquer</span>
+            </button>
+          </div>
 
         </div>
       </div>
-      {/* --- FIN NOUVEAUX FILTRES --- */}
+      {/* --- FIN FILTRES MIS À JOUR --- */}
 
 
       {/* Stats Cards */}
@@ -199,7 +250,6 @@ function Dashboard() {
         }`}>
           <div className="flex items-center justify-between">
             <div>
-              {/* Titre dynamique */}
               <p className="text-sm font-medium text-gray-600 mb-1">Épargne (Période)</p>
               <p className={`text-3xl font-bold ${epargnePositive ? 'text-success-600' : 'text-red-600'}`}>
                 {stats?.epargne_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
@@ -209,7 +259,6 @@ function Dashboard() {
               <Wallet className={`h-8 w-8 ${epargnePositive ? 'text-success-600' : 'text-red-600'}`} />
             </div>
           </div>
-           {/* Affichage de la période sur la carte (optionnel) */}
           <p className="text-xs text-gray-500 mt-2 truncate" title={displayPeriod}>
             {displayPeriod}
           </p>
@@ -240,9 +289,8 @@ function Dashboard() {
       {/* Conteneur pour les graphiques */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
-        {/* Graphique Barres (Titre mis à jour) */}
+        {/* Graphique Barres */}
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
-          {/* Titre utilise l'année de la date de début */}
           <h2 className="text-xl font-bold text-gray-900 mb-6">Revenus vs Dépenses ({displayYear})</h2>
           <div className="h-96">
             <ResponsiveContainer width="100%" height="100%">
@@ -267,7 +315,7 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Graphique Camembert (Titre mis à jour) */}
+        {/* Graphique Camembert */}
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Répartition des Dépenses ({displayPeriod})</h2>
           <div className="h-96">
