@@ -667,16 +667,22 @@ async def generate_recurring_transactions(current_user: UserInDB = Depends(get_c
     
     return {"message": f"{generated_count} transactions generated", "count": generated_count}
 
+# ---
+# --- DÉBUT DE LA MODIFICATION ---
+# ---
+
 # Dashboard Statistics (Sécurisé)
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats(
-    year: Optional[int] = None, 
-    month: Optional[int] = None, 
+    # Remplacement de 'year' et 'month' par des dates en string (format YYYY-MM-DD)
+    start_date_str: Optional[str] = None, 
+    end_date_str: Optional[str] = None, 
     current_user: UserInDB = Depends(get_current_user)
 ):
     now = datetime.now(timezone.utc)
     
     # --- Épargne globale (pour l'utilisateur) ---
+    # (Logique inchangée)
     global_revenus = 0
     global_depenses = 0
     
@@ -699,24 +705,42 @@ async def get_dashboard_stats(
     global_epargne_totale = global_revenus - global_depenses
     # --- Fin Épargne globale ---
 
-    target_year = year if year else now.year
-    display_period = str(target_year)
-    
-    if month and month != "all":
-        target_month = month
-        start_date = datetime(target_year, target_month, 1, tzinfo=timezone.utc)
-        if target_month == 12:
-            end_date = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            end_date = datetime(target_year, target_month + 1, 1, tzinfo=timezone.utc)
-        
-        month_names_full = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
-        display_period = f"{month_names_full[target_month - 1]} {target_year}"
-    else:
-        start_date = datetime(target_year, 1, 1, tzinfo=timezone.utc)
-        end_date = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
+    # --- NOUVELLE Logique de Période ---
+    start_date = None
+    end_date = None
+    display_period = ""
+    month_names_full = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
 
-    # 1. Stats Période
+    if start_date_str and end_date_str:
+        try:
+            # start_date est le début du jour (00:00:00)
+            start_date = datetime.fromisoformat(start_date_str).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+            
+            # Date de fin (inclusive) pour l'affichage
+            temp_end_date_display = datetime.fromisoformat(end_date_str).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+            
+            # end_date pour la requête est le *début* du jour *suivant* (pour une requête $lt)
+            end_date = temp_end_date_display + timedelta(days=1)
+            
+            # Formatage de la période d'affichage en français
+            display_period = f"{start_date.strftime('%d/%m/%Y')} - {temp_end_date_display.strftime('%d/%m/%Y')}"
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Please use YYYY-MM-DD.")
+    else:
+        # Défaut: Si aucune date n'est fournie, afficher le mois actuel
+        start_date = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        if now.month == 12:
+            end_date = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end_date = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
+        
+        display_period = f"{month_names_full[now.month - 1]} {now.year}"
+    
+    # L'année cible pour le graphique en barres sera l'année de la date de DÉBUT
+    target_year = start_date.year
+    # --- FIN NOUVELLE Logique de Période ---
+
+    # 1. Stats Période (utilise les nouvelles start_date/end_date)
     period_transactions = await transactions_collection.find({
         "date": {"$gte": start_date, "$lt": end_date},
         "user_id": current_user.id # Sécurisé
@@ -726,7 +750,7 @@ async def get_dashboard_stats(
     depenses = sum(t["amount"] for t in period_transactions if t["type"] == "Dépense")
     epargne = revenus - depenses
     
-    # 2. Camembert Dépenses
+    # 2. Camembert Dépenses (utilise les nouvelles start_date/end_date)
     pipeline = [
         {
             "$match": {
@@ -763,7 +787,8 @@ async def get_dashboard_stats(
     expense_breakdown_cursor = transactions_collection.aggregate(pipeline)
     expense_breakdown = await expense_breakdown_cursor.to_list(None)
 
-    # 3. Graphique Barres
+    # 3. Graphique Barres (utilise target_year, logique inchangée)
+    # Affiche toujours les 12 mois de l'année de la date de début
     monthly_data = []
     month_names = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
     
@@ -798,6 +823,10 @@ async def get_dashboard_stats(
         "display_period": display_period,
         "global_epargne_totale": global_epargne_totale
     }
+# ---
+# --- FIN DE LA MODIFICATION ---
+# ---
+
 
 # Lancement du serveur (Identique)
 if __name__ == "__main__":
