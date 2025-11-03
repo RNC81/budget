@@ -5,14 +5,16 @@ import Transactions from './pages/Transactions';
 import Settings from './pages/Settings';
 import Layout from './components/Layout';
 
-// Import des nouvelles pages (que nous allons créer)
+// Import des nouvelles pages
 import LoginPage from './pages/LoginPage'; 
 import RegisterPage from './pages/RegisterPage';
+// --- 1. IMPORTATION DE LA NOUVELLE PAGE ---
+import VerifyEmailPage from './pages/VerifyEmailPage'; 
 
 // Import des fonctions d'authentification depuis api.js
 import { login as apiLogin, register as apiRegister, logout as apiLogout, getCurrentUser } from './api';
 
-// --- 1. Création du Contexte d'Authentification ---
+// --- Création du Contexte d'Authentification ---
 const AuthContext = createContext(null);
 
 /**
@@ -20,7 +22,7 @@ const AuthContext = createContext(null);
  */
 export const useAuth = () => useContext(AuthContext);
 
-// --- 2. Création du Fournisseur d'Authentification ---
+// --- Création du Fournisseur d'Authentification ---
 const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -32,18 +34,16 @@ const AuthProvider = ({ children }) => {
       const token = localStorage.getItem('authToken');
       if (token) {
         try {
-          // L'intercepteur d'api.js ajoutera le token
           const response = await getCurrentUser(); 
           setUser(response.data);
           setIsAuthenticated(true);
         } catch (error) {
-          // Le token est invalide ou expiré
-          apiLogout(); // Nettoie le localStorage
+          apiLogout(); 
           setUser(null);
           setIsAuthenticated(false);
         }
       }
-      setIsLoading(false); // Fin du chargement
+      setIsLoading(false); 
     };
 
     checkAuthStatus();
@@ -52,27 +52,31 @@ const AuthProvider = ({ children }) => {
   // Fonction de connexion
   const login = async (email, password) => {
     try {
-      await apiLogin(email, password); // Stocke le token
-      const response = await getCurrentUser(); // Récupère les infos utilisateur
+      await apiLogin(email, password); 
+      const response = await getCurrentUser(); 
       setUser(response.data);
       setIsAuthenticated(true);
     } catch (error) {
       console.error("Failed to login", error);
-      throw error; // Renvoie l'erreur pour que le composant LoginPage puisse l'afficher
+      throw error; 
     }
   };
 
-  // Fonction d'inscription (qui connecte automatiquement)
+  // --- 2. MODIFICATION DE LA FONCTION D'INSCRIPTION ---
+  // Elle n'essaie plus de se connecter automatiquement.
   const register = async (email, password) => {
     try {
+      // On se contente de créer l'utilisateur.
+      // Le backend enverra l'e-mail.
       await apiRegister(email, password);
-      // Connecte l'utilisateur juste après l'inscription
-      await login(email, password); 
+      // On ne fait PAS 'await login()' ici.
     } catch (error) {
       console.error("Failed to register", error);
-      throw error;
+      throw error; // Renvoie l'erreur (ex: "Email already registered")
     }
   };
+  // --- FIN MODIFICATION ---
+
 
   // Fonction de déconnexion
   const logout = () => {
@@ -91,8 +95,6 @@ const AuthProvider = ({ children }) => {
     logout,
   };
 
-  // Ne rend les enfants que lorsque le chargement initial est terminé
-  // Sauf si on utilise un écran de chargement global
   return (
     <AuthContext.Provider value={value}>
       {children}
@@ -101,25 +103,23 @@ const AuthProvider = ({ children }) => {
 };
 
 
-// --- 3. Route Protégée (Mise à jour) ---
+// --- Route Protégée (Mise à jour) ---
 function ProtectedRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
-    // Affiche un état de chargement pendant la vérification du token
     return <div>Chargement de l'application...</div>; 
   }
 
   if (!isAuthenticated) {
-    // Redirige vers la page de connexion
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   return children;
 }
 
-// --- 4. Route Publique (Nouvelle) ---
+// --- Route Publique (Nouvelle) ---
 function PublicRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
 
@@ -128,19 +128,27 @@ function PublicRoute({ children }) {
   }
 
   if (isAuthenticated) {
-    // Redirige vers le tableau de bord si l'utilisateur est déjà connecté
     return <Navigate to="/dashboard" replace />;
   }
 
   return children;
 }
 
-// --- 5. Composant App principal (Mis à jour) ---
+// --- Composant App principal (Mis à jour) ---
 function App() {
   return (
     <Router>
-      <AuthProvider> {/* Le fournisseur enveloppe toutes les routes */}
+      <AuthProvider> 
         <Routes>
+          {/* --- 3. AJOUT DE LA NOUVELLE ROUTE --- */}
+          {/* C'est une page publique, mais pas enveloppée dans PublicRoute 
+              car on doit y accéder même si on est "à moitié" authentifié. */}
+          <Route
+            path="/verify-email"
+            element={<VerifyEmailPage />}
+          />
+          {/* --- FIN AJOUT --- */}
+
           {/* Routes publiques (Connexion / Inscription) */}
           <Route
             path="/login"

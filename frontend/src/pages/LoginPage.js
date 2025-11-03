@@ -4,10 +4,8 @@ import { useAuth } from '../App'; // Importe le hook d'authentification
 import { Wallet, Lock, AlertCircle, Mail } from 'lucide-react';
 
 function LoginPage() {
-  // Utilise le contexte d'authentification
   const { login } = useAuth(); 
   
-  // États locaux pour le formulaire
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -22,11 +20,23 @@ function LoginPage() {
       // Appelle la fonction de connexion du contexte
       await login(email, password);
       // La redirection est gérée par PublicRoute dans App.js
-      // Inutile de naviguer d'ici
     } catch (err) {
-      // Le backend renvoie 401, géré dans api.js, mais on affiche une erreur
-      setError('E-mail ou mot de passe incorrect.');
+      // --- DÉBUT DE LA MODIFICATION ---
+      // On inspecte l'erreur qui vient du backend
+      if (err.response && err.response.data && err.response.data.detail) {
+        if (err.response.data.detail.includes("Email not verified")) {
+          // Cas 1: L'utilisateur n'a pas vérifié son e-mail
+          setError("Votre compte n'est pas vérifié. Veuillez consulter le lien envoyé à votre adresse e-mail (vérifiez aussi vos spams).");
+        } else {
+          // Cas 2: E-mail ou mot de passe incorrect
+          setError('E-mail ou mot de passe incorrect.');
+        }
+      } else {
+        // Cas 3: Erreur générique
+        setError('E-mail ou mot de passe incorrect.');
+      }
       setLoading(false); // Stoppe le chargement uniquement en cas d'erreur
+      // --- FIN DE LA MODIFICATION ---
     }
   };
 
