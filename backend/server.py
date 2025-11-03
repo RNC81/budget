@@ -10,6 +10,11 @@ import uuid
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 
+# --- NOUVEAUX IMPORTS POUR SENDGRID ---
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+# --- FIN DES NOUVEAUX IMPORTS ---
+
 # --- Configuration de la Sécurité (Nouveau) ---
 
 # Contexte de hachage pour les mots de passe
@@ -20,6 +25,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SECRET_KEY = os.getenv("SECRET_KEY", "u8!l$058fy+bhkeg7z$73=n8m=keb!tp9ys7si2)4$a0i&6%9l")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 jours
+
+# --- NOUVEAU : Token de vérification (24h) ---
+VERIFICATION_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 # Schéma OAuth2 pour la récupération du token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
@@ -67,6 +75,8 @@ class UserPublic(UserBase):
 
 class UserInDB(UserPublic):
     hashed_password: str
+    # is_verified est optionnel pour les comptes existants ("grandfathered")
+    is_verified: Optional[bool] = None
 
 class Token(BaseModel):
     access_token: str
@@ -167,18 +177,13 @@ class RecurringTransactionUpdate(BaseModel):
 class TransactionBulk(BaseModel):
     transactions: List[TransactionCreate]
 
-# ---
-# --- DÉBUT DE LA MODIFICATION (Ajout Modèle) ---
-# ---
+
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str
-# ---
-# --- FIN DE LA MODIFICATION ---
-# ---
 
 
-# --- Utilitaires de Sécurité (Nouveau) ---
+# --- Utilitaires de Sécurité (Mis à jour) ---
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Vérifie un mot de passe haché"""
@@ -199,10 +204,89 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+# --- NOUVEAU : Fonctions pour le token de vérification ---
+def create_verification_token(email: str) -> str:
+    """Crée un token JWT spécifique pour la vérification d'e-mail (durée 24h)"""
+    expires = datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_TOKEN_EXPIRE_MINUTES)
+    to_encode = {
+        "sub": email,
+        "exp": expires,
+        "scope": "email_verification" # Indique le but de ce token
+    }
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_email_from_verification_token(token: str) -> str:
+    """Valide le token de vérification et retourne l'e-mail"""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid verification token",
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        if payload.get("scope") != "email_verification":
+            raise credentials_exception
+            
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+            
+        return email
+    except JWTError: # Gère l'expiration du token
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification token expired or invalid",
+        )
+# --- FIN NOUVEAU ---
+
+# --- NOUVEAU : Fonction d'envoi d'e-mail ---
+def send_verification_email(email: str, token: str):
+    """Envoie l'e-mail de vérification via SendGrid (Appel Synchrone)"""
+    frontend_url = os.getenv("FRONTEND_URL")
+    sender_email = os.getenv("SENDER_EMAIL")
+    sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+
+    if not all([frontend_url, sender_email, sendgrid_api_key]):
+        print("ERREUR: Variables d'environnement manquantes pour l'envoi d'e-mail (SENDGRID_API_KEY, FRONTEND_URL, SENDER_EMAIL)")
+        raise HTTPException(status_code=500, detail="Email service is not configured.")
+
+    verification_link = f"{frontend_url}/verify-email?token={token}"
+    
+    message = Mail(
+        from_email=sender_email,
+        to_emails=email,
+        subject='Budget Tracker - Vérifiez votre adresse e-mail',
+        html_content=f"""
+            <div style="font-family: Arial, sans-serif; line-height: 1.6; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                <h2 style="color: #333;">Bienvenue sur Budget Tracker !</h2>
+                <p>Merci de vous être inscrit. Pour finaliser la création de votre compte, veuillez cliquer sur le bouton ci-dessous :</p>
+                <p style="text-align: center; margin: 25px 0;">
+                    <a href="{verification_link}" 
+                       style="background-color: #0d6efd; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                       Vérifier mon compte
+                    </a>
+                </p>
+                <p>Ce lien est valide pendant 24 heures.</p>
+                <p style="font-size: 0.9em; color: #777;">Si vous n'avez pas créé ce compte, vous pouvez ignorer cet e-mail en toute sécurité.</p>
+            </div>
+        """
+    )
+    try:
+        sg = SendGridAPIClient(sendgrid_api_key)
+        response = sg.send(message) # C'est un appel bloquant (synchrone)
+        if response.status_code >= 300: # Gère les erreurs de SendGrid
+             raise Exception(f"SendGrid error: {response.body}")
+    except Exception as e:
+        print(f"Erreur critique lors de l'envoi de l'e-mail: {e}")
+        # Lève une exception pour que la route /register puisse annuler l'inscription
+        raise HTTPException(status_code=500, detail="Failed to send verification email.")
+# --- FIN NOUVEAU ---
+
 async def get_user(email: str) -> Optional[UserInDB]:
     """Récupère un utilisateur depuis la DB par email"""
     user = await users_collection.find_one({"email": email})
     if user:
+        # Pydantic gérera l'absence de 'is_verified' et le mettra à None
         return UserInDB(**user)
     return None
 
@@ -264,11 +348,11 @@ async def initialize_default_categories(user_id: str):
                 "created_at": datetime.now(timezone.utc)
             })
 
-# --- Routes d'Authentification (Nouveau) ---
+# --- Routes d'Authentification (Mis à jour) ---
 
 @app.post("/api/auth/register", response_model=UserPublic)
 async def register_user(user: UserCreate):
-    """Crée un nouvel utilisateur"""
+    """Crée un nouvel utilisateur et envoie l'e-mail de vérification"""
     existing_user = await get_user(user.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -276,20 +360,22 @@ async def register_user(user: UserCreate):
     hashed_password = get_password_hash(user.password)
     user_id = str(uuid.uuid4())
     
+    # Vérifie si c'est le tout premier utilisateur
+    user_count = await users_collection.count_documents({})
+    is_first_user = user_count == 0
+
     new_user_data = {
         "id": user_id,
         "email": user.email,
-        "hashed_password": hashed_password
+        "hashed_password": hashed_password,
+        # Le premier utilisateur est auto-vérifié, les autres doivent vérifier
+        "is_verified": is_first_user 
     }
     
     await users_collection.insert_one(new_user_data)
     
-    # --- Logique de Migration / Initialisation ---
-    # Compte le nombre total d'utilisateurs *après* l'insertion
-    user_count = await users_collection.count_documents({})
-    
-    if user_count == 1:
-        # C'est le PREMIER utilisateur. On lui attribue toutes les données orphelines.
+    if is_first_user:
+        # C'est le PREMIER utilisateur. On lui attribue les données orphelines.
         await transactions_collection.update_many(
             {"user_id": {"$exists": False}},
             {"$set": {"user_id": user_id}}
@@ -307,15 +393,25 @@ async def register_user(user: UserCreate):
             {"$set": {"user_id": user_id}}
         )
     else:
-        # C'est un utilisateur suivant. On crée juste ses catégories par défaut.
+        # C'est un utilisateur suivant. On crée ses catégories ET on envoie l'e-mail.
         await initialize_default_categories(user_id)
         
+        try:
+            verification_token = create_verification_token(user.email)
+            # Appel synchrone, géré par FastAPI dans un threadpool
+            send_verification_email(user.email, verification_token) 
+        except Exception as e:
+            # Si l'e-mail échoue, on supprime l'utilisateur pour qu'il puisse réessayer
+            await users_collection.delete_one({"id": user_id})
+            print(f"Échec de l'envoi de l'e-mail, rollback de l'utilisateur: {e}")
+            raise HTTPException(status_code=500, detail="Impossible d'envoyer l'e-mail de vérification. Veuillez réessayer plus tard.")
+            
     return UserPublic(id=user_id, email=user.email)
 
 
 @app.post("/api/auth/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """Fournit un token d'accès"""
+    """Fournit un token d'accès, en vérifiant si l'e-mail est vérifié"""
     user = await get_user(form_data.username) # form_data.username est l'email
     
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -325,6 +421,16 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # --- NOUVELLE VÉRIFICATION DE L'E-MAIL ---
+    # On bloque si 'is_verified' est explicitement 'False'.
+    # On autorise si c'est 'True' OU 'None' (pour les anciens comptes)
+    if user.is_verified is False:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Email not verified. Please check your inbox for a verification link.",
+        )
+    # --- FIN DE LA NOUVELLE VÉRIFICATION ---
+    
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
@@ -332,15 +438,43 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     
     return {"access_token": access_token, "token_type": "bearer"}
 
+# --- NOUVELLE ROUTE DE VÉRIFICATION ---
+@app.get("/api/auth/verify-email")
+async def verify_email_route(token: str):
+    """Valide le token reçu par e-mail et active le compte"""
+    try:
+        email = await get_email_from_verification_token(token)
+    except HTTPException as e:
+        # Renvoie l'erreur de token (invalide ou expiré)
+        raise e
+    
+    user = await get_user(email)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if user.is_verified:
+        return {"message": "Email is already verified"}
+        
+    # Met à jour l'utilisateur pour le marquer comme vérifié
+    result = await users_collection.update_one(
+        {"email": email},
+        {"$set": {"is_verified": True}}
+    )
+    
+    if result.modified_count == 1:
+        return {"message": "Email verified successfully. You can now log in."}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to update user verification status")
+# --- FIN DE LA NOUVELLE ROUTE ---
+
 
 @app.get("/api/users/me", response_model=UserPublic)
 async def read_users_me(current_user: UserInDB = Depends(get_current_user)):
     """Retourne les informations de l'utilisateur connecté"""
     return UserPublic(id=current_user.id, email=current_user.email)
 
-# ---
-# --- DÉBUT DE LA MODIFICATION (Ajout Endpoint) ---
-# ---
+
 @app.put("/api/users/me/change-password")
 async def change_password(
     password_data: PasswordChangeRequest, 
@@ -372,9 +506,6 @@ async def change_password(
     )
     
     return {"message": "Password updated successfully"}
-# ---
-# --- FIN DE LA MODIFICATION ---
-# ---
 
 
 # --- Routes Métier (Sécurisées) ---
@@ -716,9 +847,6 @@ async def generate_recurring_transactions(current_user: UserInDB = Depends(get_c
     
     return {"message": f"{generated_count} transactions generated", "count": generated_count}
 
-# ---
-# --- DÉBUT DE LA MODIFICATION (Dashboard) ---
-# ---
 
 # Dashboard Statistics (Sécurisé)
 @app.get("/api/dashboard/stats")
