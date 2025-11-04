@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
+// 1. Import de 'Link' pour le lien vers les paramètres
+import { Link } from 'react-router-dom';
 import api from '../api';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar, Filter } from 'lucide-react'; // Ajout de l'icône Filter
+import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar, Filter } from 'lucide-react';
 import TransactionModal from '../components/TransactionModal';
 
 import DatePicker, { registerLocale } from 'react-datepicker';
@@ -21,16 +23,13 @@ const COLORS = [
 ];
 
 /**
- * Fonction d'initialisation pour lire le localStorage.
+ * Fonctions d'initialisation (identiques)
  */
 const getInitialStartDate = () => {
   const savedDate = localStorage.getItem('dashboardStartDate');
-  // Si la date sauvegardée existe ET est une date valide, on la parse.
-  // Le `new Date(savedDate)` peut retourner "Invalid Date" si le format est corrompu.
   if (savedDate && !isNaN(new Date(savedDate))) {
     return new Date(savedDate);
   }
-  // Défaut : premier jour du mois en cours
   return new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 };
 
@@ -39,8 +38,12 @@ const getInitialEndDate = () => {
   if (savedDate && !isNaN(new Date(savedDate))) {
     return new Date(savedDate);
   }
-  // Défaut : dernier jour du mois en cours
   return new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+};
+
+// 2. Ajout d'une fonction helper pour le formatage
+const formatCurrency = (amount) => {
+  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(amount);
 };
 
 
@@ -50,29 +53,21 @@ function Dashboard() {
   const [showModal, setShowModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // --- NOUVELLE GESTION D'ÉTAT POUR LES FILTRES ---
-  
-  // 1. "appliedParams" : L'état qui déclenche l'API. Initialisé depuis localStorage.
   const [appliedParams, setAppliedParams] = useState(() => ({
     start: getInitialStartDate(),
     end: getInitialEndDate(),
   }));
 
-  // 2. "formDate" : L'état temporaire du formulaire, pour ne pas rafraîchir en tapant.
   const [formStartDate, setFormStartDate] = useState(appliedParams.start);
   const [formEndDate, setFormEndDate] = useState(appliedParams.end);
   
-  // --- FIN NOUVELLE GESTION D'ÉTAT ---
-
   useEffect(() => {
     fetchStats();
-  // Dépend de refreshKey (pour le modal) et des "appliedParams" (filtre)
   }, [refreshKey, appliedParams]); 
 
   const fetchStats = async () => {
     setLoading(true);
     
-    // Garde-fou si les dates ne sont pas valides
     if (!appliedParams.start || !appliedParams.end) {
       setLoading(false);
       return;
@@ -93,16 +88,9 @@ function Dashboard() {
     }
   };
 
-  /**
-   * NOUVELLE FONCTION : Appliquer les filtres
-   * Déclenchée par le bouton "Appliquer".
-   */
   const handleApplyFilter = () => {
-    // 1. Sauvegarder les dates du formulaire dans localStorage
     localStorage.setItem('dashboardStartDate', formStartDate.toISOString());
     localStorage.setItem('dashboardEndDate', formEndDate.toISOString());
-    
-    // 2. Mettre à jour "appliedParams", ce qui va déclencher le useEffect
     setAppliedParams({
       start: formStartDate,
       end: formEndDate,
@@ -127,13 +115,14 @@ function Dashboard() {
   const hasExpenseData = stats?.expense_breakdown && stats.expense_breakdown.length > 0;
   
   const displayPeriod = stats?.display_period || 'Période sélectionnée';
-  
-  // L'année pour le graphique en barres est basée sur la date de DÉBUT appliquée
   const displayYear = appliedParams.start ? appliedParams.start.getFullYear() : new Date().getFullYear();
+
+  // 3. Récupération des données de budget
+  const budgets = stats?.budget_progress;
 
   return (
     <div className="space-y-8">
-      {/* Header */}
+      {/* Header (Identique) */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Tableau de Bord</h1>
@@ -150,7 +139,7 @@ function Dashboard() {
         </button>
       </div>
 
-      {/* --- FILTRES MIS À JOUR --- */}
+      {/* Filtres (Identique) */}
       <div className="bg-white rounded-2xl shadow-lg p-4 border border-gray-100">
         <div className="flex flex-col sm:flex-row gap-4 items-end">
           
@@ -161,7 +150,6 @@ function Dashboard() {
               <DatePicker
                 id="start-date"
                 selected={formStartDate}
-                // Met à jour l'état du FORMULAIRE, pas l'état appliqué
                 onChange={(date) => setFormStartDate(date)} 
                 selectsStart
                 startDate={formStartDate}
@@ -181,7 +169,6 @@ function Dashboard() {
               <DatePicker
                 id="end-date"
                 selected={formEndDate}
-                // Met à jour l'état du FORMULAIRE, pas l'état appliqué
                 onChange={(date) => setFormEndDate(date)} 
                 selectsEnd
                 startDate={formStartDate}
@@ -195,7 +182,7 @@ function Dashboard() {
             </div>
           </div>
           
-          {/* NOUVEAU BOUTON "APPLIQUER" */}
+          {/* Bouton "Appliquer" */}
           <div className="flex-shrink-0 w-full sm:w-auto">
             <button
               onClick={handleApplyFilter}
@@ -209,10 +196,8 @@ function Dashboard() {
 
         </div>
       </div>
-      {/* --- FIN FILTRES MIS À JOUR --- */}
 
-
-      {/* Stats Cards */}
+      {/* Stats Cards (Identique) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* Revenus */}
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow">
@@ -220,7 +205,7 @@ function Dashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600 mb-1">Total Revenus</p>
               <p className="text-3xl font-bold text-gray-900">
-                {stats?.revenus_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                {formatCurrency(stats?.revenus_total || 0)}
               </p>
             </div>
             <div className="bg-success-100 rounded-full p-3">
@@ -235,7 +220,7 @@ function Dashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600 mb-1">Total Dépenses</p>
               <p className="text-3xl font-bold text-gray-900">
-                {stats?.depenses_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                {formatCurrency(stats?.depenses_total || 0)}
               </p>
             </div>
             <div className="bg-red-100 rounded-full p-3">
@@ -252,7 +237,7 @@ function Dashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600 mb-1">Épargne (Période)</p>
               <p className={`text-3xl font-bold ${epargnePositive ? 'text-success-600' : 'text-red-600'}`}>
-                {stats?.epargne_total?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                {formatCurrency(stats?.epargne_total || 0)}
               </p>
             </div>
             <div className={`${epargnePositive ? 'bg-success-100' : 'bg-red-100'} rounded-full p-3`}>
@@ -272,7 +257,7 @@ function Dashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600 mb-1">Épargne Globale</p>
               <p className={`text-3xl font-bold ${globalEpargnePositive ? 'text-primary-600' : 'text-red-600'}`}>
-                {stats?.global_epargne_totale?.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                {formatCurrency(stats?.global_epargne_totale || 0)}
               </p>
             </div>
             <div className={`${globalEpargnePositive ? 'bg-primary-100' : 'bg-red-100'} rounded-full p-3`}>
@@ -283,10 +268,80 @@ function Dashboard() {
             Total de tout votre historique
           </p>
         </div>
-
       </div>
+      {/* --- FIN DES STATS CARDS --- */}
 
-      {/* Conteneur pour les graphiques */}
+
+      {/* ---
+        4. NOUVEAU BLOC : SUIVI DES BUDGETS
+        ---
+      */}
+      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-900 mb-6">Suivi des Budgets ({displayPeriod})</h2>
+        
+        {budgets && budgets.length > 0 ? (
+          <div className="space-y-6">
+            {budgets.map((budget) => {
+              // Calcul des pourcentages
+              const spent = budget.spent;
+              const amount = budget.amount;
+              // % brut (peut dépasser 100%)
+              const rawPercentage = (spent / amount) * 100;
+              // % plafonné à 100% pour la barre visuelle
+              const clampedPercentage = Math.min(rawPercentage, 100);
+
+              // Choix de la couleur
+              let barColor = 'bg-success-600'; // Vert
+              if (rawPercentage > 95) {
+                barColor = 'bg-red-600'; // Rouge
+              } else if (rawPercentage > 75) {
+                barColor = 'bg-yellow-500'; // Orange/Jaune
+              }
+
+              return (
+                <div key={budget.id}>
+                  {/* Légende (Nom et montants) */}
+                  <div className="flex justify-between items-baseline mb-1">
+                    <span className="font-semibold text-gray-800">{budget.category_name}</span>
+                    <span className="text-sm font-medium text-gray-600">
+                      {formatCurrency(spent)} / {formatCurrency(amount)}
+                    </span>
+                  </div>
+                  {/* Barre de progression */}
+                  <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                    <div
+                      className={`h-4 rounded-full ${barColor} transition-all duration-500`}
+                      style={{ width: `${clampedPercentage}%` }}
+                    ></div>
+                  </div>
+                  {/* Indicateur de dépassement */}
+                  {rawPercentage > 100 && (
+                    <p className="text-right text-sm font-semibold text-red-600 mt-1">
+                      Dépassement de {formatCurrency(spent - amount)}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          // --- Placeholder s'il n'y a pas de budget ---
+          <div className="text-center text-gray-500 py-6 border-2 border-dashed border-gray-200 rounded-lg">
+            <PiggyBank className="h-12 w-12 mx-auto text-gray-400 mb-2" />
+            <p className="font-medium">Aucun budget défini pour cette période.</p>
+            <p className="text-sm mt-1">
+              Vous pouvez ajouter des budgets mensuels dans les{' '}
+              <Link to="/settings" className="font-semibold text-primary-600 hover:underline">
+                Paramètres
+              </Link>.
+            </p>
+          </div>
+        )}
+      </div>
+      {/* --- FIN DU NOUVEAU BLOC BUDGETS --- */}
+
+
+      {/* Conteneur pour les graphiques (Identique) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
         {/* Graphique Barres */}
@@ -305,7 +360,7 @@ function Dashboard() {
                     borderRadius: '0.5rem',
                     boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
                   }}
-                  formatter={(value) => value.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                  formatter={(value) => formatCurrency(value)}
                 />
                 <Legend />
                 <Bar dataKey="revenus" name="Revenus" fill="#22c55e" radius={[8, 8, 0, 0]} />
@@ -336,7 +391,7 @@ function Dashboard() {
                     ))}
                   </Pie>
                   <Tooltip
-                    formatter={(value) => [value.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }), 'Total']}
+                    formatter={(value) => [formatCurrency(value), 'Total']}
                   />
                   <Legend />
                 </PieChart>
@@ -351,7 +406,7 @@ function Dashboard() {
 
       </div>
 
-      {/* Transaction Modal */}
+      {/* Transaction Modal (Identique) */}
       {showModal && (
         <TransactionModal
           onClose={() => setShowModal(false)}

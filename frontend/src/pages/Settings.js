@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-// 1. Ajout de l'icône 'Shield'
-import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload, Shield } from 'lucide-react';
+// 1. Ajout de l'icône 'PiggyBank'
+import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload, Shield, PiggyBank } from 'lucide-react';
 import CategoriesTab from '../components/settings/CategoriesTab';
 import SubCategoriesTab from '../components/settings/SubCategoriesTab';
 import RecurringTransactionsTab from '../components/settings/RecurringTransactionsTab';
 import ImportTab from '../components/settings/ImportTab';
-// 2. Import du nouveau composant (que nous allons créer)
 import PasswordTab from '../components/settings/PasswordTab'; 
+// 2. Import du nouveau composant (que nous créerons à l'étape suivante)
+import BudgetsTab from '../components/settings/BudgetsTab';
 
 function Settings() {
   const [activeTab, setActiveTab] = useState('categories');
@@ -14,9 +15,10 @@ function Settings() {
   const tabs = [
     { id: 'categories', name: 'Catégories', icon: Tag },
     { id: 'subcategories', name: 'Sous-Catégories', icon: FolderTree },
+    // 3. Ajout du nouvel onglet "Budgets"
+    { id: 'budgets', name: 'Budgets', icon: PiggyBank },
     { id: 'recurring', name: 'Transactions Récurrentes', icon: Repeat },
     { id: 'import', name: 'Importer', icon: Upload },
-    // 3. Ajout du nouvel onglet
     { id: 'security', name: 'Sécurité', icon: Shield }, 
   ];
 
@@ -31,7 +33,7 @@ function Settings() {
           <h1 className="text-3xl font-bold text-gray-900">Paramètres</h1>
         </div>
         {/* 4. Mise à jour de la description */}
-        <p className="text-gray-600">Gérez vos catégories, transactions, importations et sécurité</p>
+        <p className="text-gray-600">Gérez vos catégories, budgets, importations et sécurité</p>
       </div>
 
       {/* Tabs */}
@@ -62,9 +64,10 @@ function Settings() {
         <div className="p-6">
           {activeTab === 'categories' && <CategoriesTab />}
           {activeTab === 'subcategories' && <SubCategoriesTab />}
+          {/* 5. Rendu du nouveau composant */}
+          {activeTab === 'budgets' && <BudgetsTab />}
           {activeTab === 'recurring' && <RecurringTransactionsTab />}
           {activeTab === 'import' && <ImportTab />}
-          {/* 5. Rendu du nouveau composant */}
           {activeTab === 'security' && <PasswordTab />} 
         </div>
       </div>

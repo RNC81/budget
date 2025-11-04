@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 import os
@@ -68,27 +68,25 @@ MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/budget_tracker")
 client = AsyncIOMotorClient(MONGO_URL)
 db = client.budget_tracker
 
-# Collections (Identique)
+# --- NOUVEAU : Ajout de la collection Budgets ---
 users_collection = db.users
 transactions_collection = db.transactions
 categories_collection = db.categories
 subcategories_collection = db.subcategories
 recurring_transactions_collection = db.recurring_transactions
+budgets_collection = db.budgets # NOUVELLE COLLECTION
+# --- FIN NOUVEAUTÉ ---
+
 
 # --- Modèles Pydantic (Mis à jour) ---
 
 # Nouveaux modèles pour l'authentification
 class UserBase(BaseModel):
     email: EmailStr
-
 class UserCreate(UserBase):
     password: str
-
 class UserPublic(BaseModel):
-    id: str
-    email: EmailStr
-    mfa_enabled: bool = False # Correct
-
+    id: str; email: EmailStr; mfa_enabled: bool = False
 class UserInDB(UserPublic):
     hashed_password: str
     is_verified: Optional[bool] = None
@@ -96,39 +94,29 @@ class UserInDB(UserPublic):
 
 # Modèle de réponse pour la connexion (Identique)
 class TokenResponse(BaseModel):
-    access_token: Optional[str] = None
-    token_type: str = "bearer"
-    mfa_required: bool = False
-    mfa_token: Optional[str] = None 
-
+    access_token: Optional[str] = None; token_type: str = "bearer"
+    mfa_required: bool = False; mfa_token: Optional[str] = None 
 class Token(BaseModel):
-    access_token: str
-    token_type: str
-    
+    access_token: str; token_type: str
 class TokenData(BaseModel):
-    email: Optional[str] = None
-    scope: str = "access" 
+    email: Optional[str] = None; scope: str = "access" 
 
 # --- Modèles MFA (Identiques) ---
 class MfaSetupResponse(BaseModel):
-    secret_key: str
-    qr_code_data_uri: str
+    secret_key: str; qr_code_data_uri: str
 class MfaVerifyRequest(BaseModel):
     mfa_code: str
 class MfaLoginRequest(BaseModel):
-    mfa_token: str
-    mfa_code: str
+    mfa_token: str; mfa_code: str
 class MfaDisableRequest(BaseModel):
-    password: str
-    mfa_code: str
+    password: str; mfa_code: str
 # --- FIN DES MODÈLES MFA ---
 
-# --- NOUVEAU : Modèles pour le mot de passe oublié ---
+# --- Modèles pour le mot de passe oublié ---
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
+    token: str; new_password: str
 # --- FIN NOUVEAUTÉ ---
 
 
@@ -145,6 +133,23 @@ class RecurringTransaction(BaseModel):
     id: str; user_id: str; amount: float; type: str
     description: Optional[str] = None; category_id: Optional[str] = None
     subcategory_id: Optional[str] = None; frequency: str; day_of_month: int; created_at: datetime
+
+# --- NOUVEAU : Modèles pour les Budgets ---
+class Budget(BaseModel):
+    id: str
+    user_id: str
+    category_id: str
+    amount: float = Field(..., gt=0) # Le montant doit être positif
+    created_at: datetime
+
+class BudgetCreate(BaseModel):
+    category_id: str
+    amount: float = Field(..., gt=0)
+
+class BudgetUpdate(BaseModel):
+    amount: float = Field(..., gt=0)
+# --- FIN NOUVEAUTÉ ---
+
 
 # Modèles de Requête (Identiques)
 class CategoryCreate(BaseModel): name: str; type: str
@@ -169,7 +174,7 @@ class TransactionBulk(BaseModel): transactions: List[TransactionCreate]
 class PasswordChangeRequest(BaseModel): current_password: str; new_password: str
 
 
-# --- Utilitaires de Sécurité (Mis à jour) ---
+# --- Utilitaires de Sécurité (Identiques) ---
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
@@ -225,7 +230,7 @@ async def get_email_from_mfa_token(token: str) -> str:
     except JWTError:
         raise credentials_exception
 
-# --- NOUVEAU : Fonctions pour le token de mot de passe oublié ---
+# --- Fonctions pour le token de mot de passe oublié ---
 def create_password_reset_token(email: str) -> str:
     expires = datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
     to_encode = {
@@ -310,7 +315,7 @@ def send_verification_email(email: str, token: str):
         print(f"Erreur critique lors de l'envoi de l'e-mail: {e}")
         raise HTTPException(status_code=500, detail="Failed to send verification email.")
 
-# --- NOUVEAU : Fonction d'envoi d'e-mail de réinitialisation ---
+# --- Fonction d'envoi d'e-mail de réinitialisation ---
 def send_password_reset_email(email: str, token: str):
     frontend_url = os.getenv("FRONTEND_URL")
     sender_email = os.getenv("SENDER_EMAIL")
@@ -349,7 +354,7 @@ def send_password_reset_email(email: str, token: str):
     except Exception as e:
         print(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
         raise HTTPException(status_code=500, detail="Failed to send password reset email.")
-# --- FIN NOUVEAUTÉ ---
+# --- FIN FONCTIONS EMAIL ---
 
 
 # --- Fonctions de l'Utilisateur (Identiques) ---
@@ -404,24 +409,21 @@ async def initialize_default_categories(user_id: str):
                 "type": cat["type"], "created_at": datetime.now(timezone.utc)
             })
 
-# --- Routes d'Authentification (Mis à jour) ---
+# --- Routes d'Authentification (Identiques) ---
 
 @app.post("/api/auth/register", response_model=UserPublic)
 async def register_user(user: UserCreate):
     existing_user = await get_user(user.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
     hashed_password = get_password_hash(user.password)
     user_id = str(uuid.uuid4())
     user_count = await users_collection.count_documents({})
     is_first_user = user_count == 0
-
     new_user_data = {
         "id": user_id, "email": user.email, "hashed_password": hashed_password,
         "is_verified": is_first_user, "mfa_enabled": False, "mfa_secret": None
     }
-    
     if is_first_user:
         await users_collection.insert_one(new_user_data)
         await transactions_collection.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": user_id}})
@@ -435,30 +437,24 @@ async def register_user(user: UserCreate):
         except Exception as e:
             print(f"Échec de l'envoi de l'e-mail, l'utilisateur n'a PAS été créé: {e}")
             raise HTTPException(status_code=500, detail="Impossible d'envoyer l'e-mail de vérification. Vos identifiants SendGrid sont-ils corrects ?")
-        
         await users_collection.insert_one(new_user_data)
         await initialize_default_categories(user_id)
-            
     return UserPublic(id=user_id, email=user.email, mfa_enabled=False)
-
 
 @app.post("/api/auth/token", response_model=TokenResponse) 
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     user = await get_user(form_data.username)
-    
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
     if user.is_verified is False:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email not verified. Please check your inbox for a verification link.",
         )
-    
     if user.mfa_enabled:
         mfa_token = create_mfa_token(user.email)
         return TokenResponse(mfa_required=True, mfa_token=mfa_token)
@@ -470,21 +466,17 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
         return TokenResponse(access_token=access_token, token_type="bearer", mfa_required=False)
 
-
 @app.post("/api/auth/mfa-login", response_model=Token)
 async def mfa_login(mfa_data: MfaLoginRequest):
     try:
         email = await get_email_from_mfa_token(mfa_data.mfa_token)
     except HTTPException as e:
         raise e 
-        
     user = await get_user(email)
     if not user or not user.mfa_enabled or not user.mfa_secret:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled for this user.")
-        
     if not verify_mfa_code(user.mfa_secret, mfa_data.mfa_code):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code.")
-        
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email, "scope": "access"}, 
@@ -492,33 +484,26 @@ async def mfa_login(mfa_data: MfaLoginRequest):
     )
     return Token(access_token=access_token, token_type="bearer")
 
-
 @app.get("/api/auth/verify-email")
 async def verify_email_route(token: str):
     try:
         email = await get_email_from_verification_token(token)
     except HTTPException as e:
         raise e
-    
     user = await get_user(email)
-    
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
     if user.is_verified:
         return {"message": "Email is already verified"}
-        
     result = await users_collection.update_one(
         {"email": email},
         {"$set": {"is_verified": True}}
     )
-    
     if result.modified_count == 1:
         return {"message": "Email verified successfully. You can now log in."}
     else:
         raise HTTPException(status_code=500, detail="Failed to update user verification status")
 
-# --- NOUVEAU : Routes pour le mot de passe oublié ---
 @app.post("/api/auth/forgot-password")
 async def forgot_password(data: ForgotPasswordRequest):
     user = await get_user(data.email)
@@ -537,26 +522,20 @@ async def reset_password(data: ResetPasswordRequest):
         email = await get_email_from_password_reset_token(data.token)
     except HTTPException as e:
         raise e 
-    
     user = await get_user(email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
     if len(data.new_password) < 8:
          raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="New password must be at least 8 characters long",
         )
-            
     new_hashed_password = get_password_hash(data.new_password)
-    
     await users_collection.update_one(
         {"id": user.id},
         {"$set": {"hashed_password": new_hashed_password}}
     )
-    
     return {"message": "Password updated successfully. You can now log in."}
-# --- FIN NOUVEAUTÉ ---
 
 
 @app.get("/api/users/me", response_model=UserPublic)
@@ -566,7 +545,6 @@ async def read_users_me(current_user: UserInDB = Depends(get_current_user)):
         email=current_user.email, 
         mfa_enabled=current_user.mfa_enabled
     )
-
 
 @app.put("/api/users/me/change-password")
 async def change_password(
@@ -578,25 +556,19 @@ async def change_password(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect current password",
         )
-        
     if len(password_data.new_password) < 8:
          raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="New password must be at least 8 characters long",
         )
-            
     new_hashed_password = get_password_hash(password_data.new_password)
-    
     await users_collection.update_one(
         {"id": current_user.id},
         {"$set": {"hashed_password": new_hashed_password}}
     )
-    
     return {"message": "Password updated successfully"}
 
-
 # --- Routes MFA (Identiques) ---
-
 @app.get("/api/mfa/setup", response_model=MfaSetupResponse)
 async def mfa_setup_generate(current_user: UserInDB = Depends(get_current_user)):
     if current_user.mfa_enabled:
@@ -608,7 +580,6 @@ async def mfa_setup_generate(current_user: UserInDB = Depends(get_current_user))
         {"$set": {"mfa_secret": secret_key, "mfa_enabled": False}} 
     )
     return MfaSetupResponse(secret_key=secret_key, qr_code_data_uri=qr_code_uri)
-
 
 @app.post("/api/mfa/verify")
 async def mfa_setup_verify(
@@ -626,7 +597,6 @@ async def mfa_setup_verify(
         {"$set": {"mfa_enabled": True}}
     )
     return {"message": "MFA enabled successfully."}
-
 
 @app.post("/api/mfa/disable")
 async def mfa_disable(
@@ -648,7 +618,7 @@ async def mfa_disable(
 
 
 # ---
-# --- DÉBUT DES ROUTES MÉTIER (PRÉSENTES ET CORRECTES) ---
+# --- DÉBUT DES ROUTES MÉTIER ---
 # ---
 
 @app.get("/api/health")
@@ -693,6 +663,9 @@ async def delete_category(category_id: str, current_user: UserInDB = Depends(get
         {"category_id": category_id, "user_id": current_user.id},
         {"$set": {"category_id": None, "subcategory_id": None}}
     )
+    # --- NOUVEAU : Supprimer aussi le budget associé ---
+    await budgets_collection.delete_many({"category_id": category_id, "user_id": current_user.id})
+    # --- FIN NOUVEAUTÉ ---
     await categories_collection.delete_one({"id": category_id, "user_id": current_user.id})
     return {"message": "Category deleted successfully"}
 
@@ -738,60 +711,38 @@ async def delete_subcategory(subcategory_id: str, current_user: UserInDB = Depen
     await subcategories_collection.delete_one({"id": subcategory_id, "user_id": current_user.id})
     return {"message": "SubCategory deleted successfully"}
 
-# ---
-# --- CORRECTION DU BUG D'AFFICHAGE DES TRANSACTIONS ---
-# ---
+# Transaction Routes (Corrigées)
 @app.get("/api/transactions")
 async def get_transactions(
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    category_id: Optional[str] = None,
-    search: Optional[str] = None,
+    start_date: Optional[str] = None, end_date: Optional[str] = None,
+    category_id: Optional[str] = None, search: Optional[str] = None,
     current_user: UserInDB = Depends(get_current_user)
 ):
     query = {"user_id": current_user.id} 
-    
     if start_date and end_date:
         query["date"] = {
             "$gte": datetime.fromisoformat(start_date.replace('Z', '+00:00')),
             "$lte": datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         }
-    
     if category_id:
         query["category_id"] = category_id
-    
     if search:
         query["description"] = {"$regex": search, "$options": "i"}
-    
     transactions = await transactions_collection.find(query).sort("date", -1).to_list(None)
-    
-    # On revient à votre méthode de "construction manuelle" du dictionnaire.
-    # C'est la CORRECTION. Ma version [t for t in transactions] était buggée.
+    # Correction du bug d'affichage (retour au format manuel)
     return [{
-        "id": t["id"],
-        "date": t["date"],
-        "amount": t["amount"],
-        "type": t["type"],
-        "description": t.get("description"),
-        "category_id": t.get("category_id"),
-        "subcategory_id": t.get("subcategory_id"),
-        "created_at": t["created_at"]
+        "id": t["id"], "date": t["date"], "amount": t["amount"], "type": t["type"],
+        "description": t.get("description"), "category_id": t.get("category_id"),
+        "subcategory_id": t.get("subcategory_id"), "created_at": t["created_at"]
     } for t in transactions]
-# --- FIN DE LA CORRECTION ---
-
 
 @app.post("/api/transactions")
 async def create_transaction(transaction: TransactionCreate, current_user: UserInDB = Depends(get_current_user)):
     transaction_id = str(uuid.uuid4())
     new_transaction_data = {
-        "id": transaction_id,
-        "user_id": current_user.id, 
-        "date": transaction.date,
-        "amount": transaction.amount,
-        "type": transaction.type,
-        "description": transaction.description,
-        "category_id": transaction.category_id,
-        "subcategory_id": transaction.subcategory_id,
+        "id": transaction_id, "user_id": current_user.id, "date": transaction.date,
+        "amount": transaction.amount, "type": transaction.type, "description": transaction.description,
+        "category_id": transaction.category_id, "subcategory_id": transaction.subcategory_id,
         "created_at": datetime.now(timezone.utc)
     }
     await transactions_collection.insert_one(new_transaction_data.copy())
@@ -802,23 +753,15 @@ async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB
     new_transactions_data = []
     for transaction in data.transactions:
         transaction_id = str(uuid.uuid4())
-        # Correction de la petite erreur de variable de votre code original
         new_transaction_doc = { 
-            "id": transaction_id,
-            "user_id": current_user.id, 
-            "date": transaction.date,
-            "amount": transaction.amount,
-            "type": transaction.type,
-            "description": transaction.description,
-            "category_id": transaction.category_id,
-            "subcategory_id": transaction.subcategory_id,
+            "id": transaction_id, "user_id": current_user.id, "date": transaction.date,
+            "amount": transaction.amount, "type": transaction.type, "description": transaction.description,
+            "category_id": transaction.category_id, "subcategory_id": transaction.subcategory_id,
             "created_at": datetime.now(timezone.utc)
         }
         new_transactions_data.append(new_transaction_doc) 
-    
     if not new_transactions_data:
         raise HTTPException(status_code=400, detail="No transactions to import.")
-
     try:
         await transactions_collection.insert_many(new_transactions_data, ordered=False)
         return {"message": f"{len(new_transactions_data)} transactions imported successfully."}
@@ -830,17 +773,13 @@ async def update_transaction(transaction_id: str, transaction: TransactionUpdate
     existing = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    
     update_data = {k: v for k, v in transaction.dict(exclude_unset=True).items()}
     if update_data:
         await transactions_collection.update_one(
             {"id": transaction_id, "user_id": current_user.id}, 
             {"$set": update_data}
         )
-    
     updated = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
-    # Ici, retourner le document complet est OK car il est sérialisé par Pydantic
-    # (le problème est spécifiquement sur les listes)
     return updated
 
 @app.delete("/api/transactions/{transaction_id}")
@@ -848,40 +787,29 @@ async def delete_transaction(transaction_id: str, current_user: UserInDB = Depen
     existing = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    
     await transactions_collection.delete_one({"id": transaction_id, "user_id": current_user.id})
     return {"message": "Transaction deleted successfully"}
 
-# Recurring Transaction Routes (Sécurisées)
+# Recurring Transaction Routes (Corrigées)
 @app.get("/api/recurring-transactions")
 async def get_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
     recurring = await recurring_transactions_collection.find({"user_id": current_user.id}).to_list(None)
-    # On applique la même correction ici par sécurité
+    # Correction du bug d'affichage (retour au format manuel)
     return [{
-        "id": r["id"],
-        "amount": r["amount"],
-        "type": r["type"],
-        "description": r.get("description"),
-        "category_id": r.get("category_id"),
-        "subcategory_id": r.get("subcategory_id"),
-        "frequency": r["frequency"],
-        "day_of_month": r["day_of_month"],
-        "created_at": r["created_at"]
+        "id": r["id"], "amount": r["amount"], "type": r["type"],
+        "description": r.get("description"), "category_id": r.get("category_id"),
+        "subcategory_id": r.get("subcategory_id"), "frequency": r["frequency"],
+        "day_of_month": r["day_of_month"], "created_at": r["created_at"]
     } for r in recurring]
 
 @app.post("/api/recurring-transactions")
 async def create_recurring_transaction(recurring: RecurringTransactionCreate, current_user: UserInDB = Depends(get_current_user)):
     recurring_id = str(uuid.uuid4())
     new_recurring_data = {
-        "id": recurring_id,
-        "user_id": current_user.id, 
-        "amount": recurring.amount,
-        "type": recurring.type,
-        "description": recurring.description,
-        "category_id": recurring.category_id,
-        "subcategory_id": recurring.subcategory_id,
-        "frequency": recurring.frequency,
-        "day_of_month": recurring.day_of_month,
+        "id": recurring_id, "user_id": current_user.id, "amount": recurring.amount,
+        "type": recurring.type, "description": recurring.description,
+        "category_id": recurring.category_id, "subcategory_id": recurring.subcategory_id,
+        "frequency": recurring.frequency, "day_of_month": recurring.day_of_month,
         "created_at": datetime.now(timezone.utc)
     }
     await recurring_transactions_collection.insert_one(new_recurring_data.copy())
@@ -892,16 +820,13 @@ async def update_recurring_transaction(recurring_id: str, recurring: RecurringTr
     existing = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
-    
     update_data = {k: v for k, v in recurring.dict(exclude_unset=True).items()}
     if update_data:
         await recurring_transactions_collection.update_one(
             {"id": recurring_id, "user_id": current_user.id}, 
             {"$set": update_data}
         )
-    
     updated = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
-    # Idem, le retour d'un seul doc est géré
     return updated
 
 @app.delete("/api/recurring-transactions/{recurring_id}")
@@ -909,53 +834,130 @@ async def delete_recurring_transaction(recurring_id: str, current_user: UserInDB
     existing = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
     if not existing:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
-    
     await recurring_transactions_collection.delete_one({"id": recurring_id, "user_id": current_user.id})
     return {"message": "Recurring transaction deleted successfully"}
 
 @app.post("/api/recurring-transactions/generate")
 async def generate_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
-    current_month = now.month
-    current_year = now.year
-    current_day = now.day
-    
+    current_month, current_year, current_day = now.month, now.year, now.day
     recurring_list = await recurring_transactions_collection.find({"user_id": current_user.id}).to_list(None)
     generated_count = 0
-    
     for recurring in recurring_list:
         if recurring["frequency"] == "Mensuel" and current_day >= recurring["day_of_month"]:
             existing = await transactions_collection.find_one({
-                "user_id": current_user.id, 
-                "description": recurring.get("description"),
-                "amount": recurring["amount"],
-                "type": recurring["type"],
+                "user_id": current_user.id, "description": recurring.get("description"),
+                "amount": recurring["amount"], "type": recurring["type"],
                 "date": {
                     "$gte": datetime(current_year, current_month, 1, tzinfo=timezone.utc),
                     "$lt": datetime(current_year, current_month + 1 if current_month < 12 else 1, 1, tzinfo=timezone.utc)
                 }
             })
-            
             if not existing:
                 transaction_id = str(uuid.uuid4())
                 transaction_date = datetime(current_year, current_month, recurring["day_of_month"], tzinfo=timezone.utc)
                 await transactions_collection.insert_one({
-                    "id": transaction_id,
-                    "user_id": current_user.id, 
-                    "date": transaction_date,
-                    "amount": recurring["amount"],
-                    "type": recurring["type"],
-                    "description": recurring.get("description"),
-                    "category_id": recurring.get("category_id"),
-                    "subcategory_id": recurring.get("subcategory_id"),
-                    "created_at": datetime.now(timezone.utc)
+                    "id": transaction_id, "user_id": current_user.id, "date": transaction_date,
+                    "amount": recurring["amount"], "type": recurring["type"],
+                    "description": recurring.get("description"), "category_id": recurring.get("category_id"),
+                    "subcategory_id": recurring.get("subcategory_id"), "created_at": datetime.now(timezone.utc)
                 })
                 generated_count += 1
-    
     return {"message": f"{generated_count} transactions generated", "count": generated_count}
 
+# --- NOUVEAU : Routes pour les Budgets ---
 
-# Dashboard Statistics (Sécurisé)
+@app.get("/api/budgets")
+async def get_budgets(current_user: UserInDB = Depends(get_current_user)):
+    """Récupère tous les budgets de l'utilisateur."""
+    budgets = await budgets_collection.find({"user_id": current_user.id}).to_list(None)
+    # On retourne les données formatées pour être sûr
+    return [{
+        "id": b["id"],
+        "user_id": b["user_id"],
+        "category_id": b["category_id"],
+        "amount": b["amount"],
+        "created_at": b["created_at"]
+    } for b in budgets]
+
+@app.post("/api/budgets")
+async def create_budget(budget: BudgetCreate, current_user: UserInDB = Depends(get_current_user)):
+    """Crée un nouveau budget mensuel pour une catégorie."""
+    
+    # 1. Vérifier que la catégorie existe et appartient à l'utilisateur
+    category = await categories_collection.find_one({
+        "id": budget.category_id, 
+        "user_id": current_user.id
+    })
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    # 2. Vérifier si un budget existe DÉJÀ pour cette catégorie
+    existing_budget = await budgets_collection.find_one({
+        "user_id": current_user.id,
+        "category_id": budget.category_id
+    })
+    if existing_budget:
+        raise HTTPException(status_code=400, detail="A budget for this category already exists. Please update the existing one.")
+
+    # 3. Créer le nouveau budget
+    budget_id = str(uuid.uuid4())
+    new_budget_data = {
+        "id": budget_id,
+        "user_id": current_user.id,
+        "category_id": budget.category_id,
+        "amount": budget.amount,
+        "created_at": datetime.now(timezone.utc)
+    }
+    await budgets_collection.insert_one(new_budget_data.copy())
+    return new_budget_data
+
+@app.put("/api/budgets/{budget_id}")
+async def update_budget(budget_id: str, budget: BudgetUpdate, current_user: UserInDB = Depends(get_current_user)):
+    """Met à jour le montant d'un budget existant."""
+    
+    # 1. Vérifier que le budget existe et appartient à l'utilisateur
+    existing = await budgets_collection.find_one({
+        "id": budget_id, 
+        "user_id": current_user.id
+    })
+    if not existing:
+        raise HTTPException(status_code=404, detail="Budget not found")
+        
+    # 2. Mettre à jour le montant
+    update_data = {"amount": budget.amount}
+    await budgets_collection.update_one(
+        {"id": budget_id, "user_id": current_user.id},
+        {"$set": update_data}
+    )
+    
+    # 3. Renvoyer le document mis à jour
+    updated = await budgets_collection.find_one({"id": budget_id, "user_id": current_user.id})
+    return updated
+
+@app.delete("/api/budgets/{budget_id}")
+async def delete_budget(budget_id: str, current_user: UserInDB = Depends(get_current_user)):
+    """Supprime un budget."""
+    
+    # 1. Vérifier que le budget existe et appartient à l'utilisateur
+    existing = await budgets_collection.find_one({
+        "id": budget_id, 
+        "user_id": current_user.id
+    })
+    if not existing:
+        raise HTTPException(status_code=404, detail="Budget not found")
+        
+    # 2. Supprimer le budget
+    await budgets_collection.delete_one({"id": budget_id, "user_id": current_user.id})
+    
+    return {"message": "Budget deleted successfully"}
+
+# --- FIN NOUVEAUTÉ ---
+
+
+# ---
+# --- MISE À JOUR MAJEURE : Dashboard Statistics ---
+# ---
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats(
     start_date_str: Optional[str] = None, 
@@ -964,30 +966,25 @@ async def get_dashboard_stats(
 ):
     now = datetime.now(timezone.utc)
     
+    # --- 1. Calcul de l'épargne globale (identique) ---
     global_revenus = 0
     global_depenses = 0
-    
     pipeline_revenus = [
         {"$match": {"type": "Revenu", "user_id": current_user.id}}, 
         {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
     ]
     revenus_result = await transactions_collection.aggregate(pipeline_revenus).to_list(None)
-    if revenus_result:
-        global_revenus = revenus_result[0]['total']
-
+    if revenus_result: global_revenus = revenus_result[0]['total']
     pipeline_depenses = [
         {"$match": {"type": "Dépense", "user_id": current_user.id}}, 
         {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
     ]
     depenses_result = await transactions_collection.aggregate(pipeline_depenses).to_list(None)
-    if depenses_result:
-        global_depenses = depenses_result[0]['total']
-
+    if depenses_result: global_depenses = depenses_result[0]['total']
     global_epargne_totale = global_revenus - global_depenses
     
-    start_date = None
-    end_date = None
-    display_period = ""
+    # --- 2. Définition de la période (identique) ---
+    start_date, end_date, display_period = None, None, ""
     month_names_full = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
 
     if start_date_str and end_date_str:
@@ -1000,15 +997,13 @@ async def get_dashboard_stats(
             raise HTTPException(status_code=400, detail="Invalid date format. Please use YYYY-MM-DD.")
     else:
         start_date = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
-        if now.month == 12:
-            end_date = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            end_date = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
-        
+        if now.month == 12: end_date = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
+        else: end_date = datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc)
         display_period = f"{month_names_full[now.month - 1]} {now.year}"
     
     target_year = start_date.year
     
+    # --- 3. Calculs des stats de la période (identique) ---
     period_transactions = await transactions_collection.find({
         "date": {"$gte": start_date, "$lt": end_date},
         "user_id": current_user.id
@@ -1018,46 +1013,68 @@ async def get_dashboard_stats(
     depenses = sum(t["amount"] for t in period_transactions if t["type"] == "Dépense")
     epargne = revenus - depenses
     
+    # --- 4. Camembert Dépenses (identique) ---
     pipeline = [
-        {
-            "$match": {
-                "date": {"$gte": start_date, "$lt": end_date},
-                "type": "Dépense",
-                "user_id": current_user.id 
-            }
-        },
-        { "$group": { "_id": "$category_id", "value": {"$sum": "$amount"} } },
-        { "$lookup": { "from": "categories", "localField": "_id", "foreignField": "id", "as": "category_details" } },
-        { "$unwind": "$category_details" },
-        { "$project": { "_id": 0, "name": "$category_details.name", "value": "$value" } }
+        {"$match": {"date": {"$gte": start_date, "$lt": end_date}, "type": "Dépense", "user_id": current_user.id}},
+        {"$group": { "_id": "$category_id", "value": {"$sum": "$amount"} } },
+        {"$lookup": { "from": "categories", "localField": "_id", "foreignField": "id", "as": "category_details" } },
+        {"$unwind": "$category_details"},
+        {"$project": { "_id": 0, "name": "$category_details.name", "value": "$value" } }
     ]
     expense_breakdown = await transactions_collection.aggregate(pipeline).to_list(None)
 
+    # --- 5. Graphique Barres (identique) ---
     monthly_data = []
     month_names = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
-    
     for i in range(12):
         month_num = i + 1
         month_start = datetime(target_year, month_num, 1, tzinfo=timezone.utc)
-        if month_num == 12:
-            month_end = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            month_end = datetime(target_year, month_num + 1, 1, tzinfo=timezone.utc)
-        
+        if month_num == 12: month_end = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
+        else: month_end = datetime(target_year, month_num + 1, 1, tzinfo=timezone.utc)
         month_transactions = await transactions_collection.find({
-            "date": {"$gte": month_start, "$lt": month_end},
-            "user_id": current_user.id
+            "date": {"$gte": month_start, "$lt": month_end}, "user_id": current_user.id
         }).to_list(None)
-        
         month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Revenu")
         month_depenses = sum(t["amount"] for t in month_transactions if t["type"] == "Dépense")
-        
         monthly_data.append({
-            "month": month_names[i],
-            "revenus": month_revenus,
-            "depenses": month_depenses
+            "month": month_names[i], "revenus": month_revenus, "depenses": month_depenses
         })
     
+    # --- 6. NOUVEAU : Calcul de la progression des budgets ---
+    budget_progress = []
+    
+    # a. Récupérer tous les budgets de l'utilisateur
+    user_budgets = await budgets_collection.find({"user_id": current_user.id}).to_list(None)
+    
+    # b. Récupérer toutes les catégories pour avoir les noms
+    user_categories = await categories_collection.find({"user_id": current_user.id}).to_list(None)
+    category_name_map = {cat["id"]: cat["name"] for cat in user_categories}
+    
+    # c. Calculer les dépenses par catégorie pour la *période sélectionnée*
+    # (On utilise la variable `period_transactions` déjà chargée !)
+    spending_by_category = {}
+    for t in period_transactions:
+        if t["type"] == "Dépense" and t.get("category_id"):
+            cat_id = t["category_id"]
+            spending_by_category[cat_id] = spending_by_category.get(cat_id, 0) + t["amount"]
+            
+    # d. Construire la liste `budget_progress`
+    for budget in user_budgets:
+        cat_id = budget["category_id"]
+        amount_budgeted = budget["amount"]
+        amount_spent = spending_by_category.get(cat_id, 0)
+        
+        budget_progress.append({
+            "id": budget["id"],
+            "category_id": cat_id,
+            "category_name": category_name_map.get(cat_id, "Catégorie inconnue"),
+            "amount_budgeted": amount_budgeted,
+            "amount_spent": amount_spent,
+            "remaining": amount_budgeted - amount_spent
+        })
+    # --- FIN NOUVEAUTÉ ---
+    
+    # --- 7. Retourner la réponse complète (avec la nouvelle clé) ---
     return {
         "revenus_total": revenus,
         "depenses_total": depenses,
@@ -1065,7 +1082,8 @@ async def get_dashboard_stats(
         "monthly_data": monthly_data,
         "expense_breakdown": expense_breakdown,
         "display_period": display_period,
-        "global_epargne_totale": global_epargne_totale
+        "global_epargne_totale": global_epargne_totale,
+        "budget_progress": budget_progress # <--- NOUVELLE DONNÉE AJOUTÉE
     }
 
 

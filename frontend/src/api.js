@@ -98,7 +98,7 @@ export const mfaDisable = async (password, mfaCode) => {
   });
 };
 
-// --- NOUVEAU : Fonctions de réinitialisation de mot de passe ---
+// --- Fonctions de réinitialisation de mot de passe ---
 
 export const requestPasswordReset = async (email) => {
   return await api.post('/api/auth/forgot-password', {
@@ -111,6 +111,47 @@ export const resetPassword = async (token, newPassword) => {
     token: token,
     new_password: newPassword,
   });
+};
+// --- FIN NOUVEAUTÉ ---
+
+// --- NOUVEAU : Fonctions de Gestion des Budgets ---
+
+/**
+ * Récupère tous les budgets de l'utilisateur.
+ */
+export const getBudgets = async () => {
+  return await api.get('/api/budgets');
+};
+
+/**
+ * Crée un nouveau budget.
+ * @param {string} categoryId - L'ID de la catégorie.
+ * @param {number} amount - Le montant du budget.
+ */
+export const createBudget = async (categoryId, amount) => {
+  return await api.post('/api/budgets', {
+    category_id: categoryId,
+    amount: amount,
+  });
+};
+
+/**
+ * Met à jour le montant d'un budget existant.
+ * @param {string} budgetId - L'ID du budget.
+ * @param {number} amount - Le nouveau montant.
+ */
+export const updateBudget = async (budgetId, amount) => {
+  return await api.put(`/api/budgets/${budgetId}`, {
+    amount: amount,
+  });
+};
+
+/**
+ * Supprime un budget.
+ * @param {string} budgetId - L'ID du budget.
+ */
+export const deleteBudget = async (budgetId) => {
+  return await api.delete(`/api/budgets/${budgetId}`);
 };
 // --- FIN NOUVEAUTÉ ---
 
