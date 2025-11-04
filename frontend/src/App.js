@@ -5,16 +5,20 @@ import Transactions from './pages/Transactions';
 import Settings from './pages/Settings';
 import Layout from './components/Layout';
 
-// Import des nouvelles pages
+// Import des pages d'authentification
 import LoginPage from './pages/LoginPage'; 
 import RegisterPage from './pages/RegisterPage';
 import VerifyEmailPage from './pages/VerifyEmailPage'; 
+// --- NOUVEAU : Imports pour le mot de passe oublié ---
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
+// --- FIN NOUVEAUTÉ ---
+
 
 // --- 1. MODIFICATION DES IMPORTS ---
-// On importe les fonctions *spécifiques* de l'API dont on aura besoin
 import { 
   login as apiLogin, 
-  mfaLogin as apiMfaLogin, // Import de la nouvelle fonction
+  mfaLogin as apiMfaLogin,
   register as apiRegister, 
   logout as apiLogout, 
   getCurrentUser 
@@ -32,7 +36,7 @@ export const useAuth = () => useContext(AuthContext);
 const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoading, setIsLoading] = useState(true); // Pour le chargement initial
+  const [isLoading, setIsLoading] = useState(true); 
 
   // Effet pour vérifier le statut de l'authentification au chargement de l'app
   useEffect(() => {
@@ -41,7 +45,7 @@ const AuthProvider = ({ children }) => {
       if (token) {
         try {
           const response = await getCurrentUser(); 
-          setUser(response.data); // Stocke l'utilisateur (avec mfa_enabled)
+          setUser(response.data); 
           setIsAuthenticated(true);
         } catch (error) {
           apiLogout(); 
@@ -55,17 +59,14 @@ const AuthProvider = ({ children }) => {
     checkAuthStatus();
   }, []);
 
-  // --- 2. MODIFICATION DE LA FONCTION DE CONNEXION ---
+  // --- 2. MODIFICATION DE LA FONCTION DE CONNEXION (Identique) ---
   
   /**
    * Étape 1 de la connexion (e-mail/mot de passe).
-   * N'authentifie PAS l'utilisateur, mais renvoie la réponse du backend.
    */
   const login = async (email, password) => {
     try {
       const response = await apiLogin(email, password);
-      // Renvoie la réponse (ex: { mfa_required: true, mfa_token: '...' })
-      // ou { mfa_required: false, access_token: '...' }
       return response.data; // On renvoie .data
     } catch (error) {
       console.error("Failed login step 1", error);
@@ -75,12 +76,10 @@ const AuthProvider = ({ children }) => {
 
   /**
    * Étape 2 de la connexion (Code MFA).
-   * N'authentifie PAS l'utilisateur, mais renvoie le token d'accès final.
    */
   const loginWithMfa = async (mfaToken, mfaCode) => {
     try {
       const response = await apiMfaLogin(mfaToken, mfaCode);
-      // Renvoie la réponse (ex: { access_token: '...' })
       return response.data; // On renvoie .data
     } catch (error) {
       console.error("Failed login step 2 (MFA)", error);
@@ -90,18 +89,16 @@ const AuthProvider = ({ children }) => {
 
   /**
    * Étape finale : L'authentification est réussie.
-   * Met à jour l'état de l'application.
    */
   const completeLogin = async (accessToken) => {
     try {
       localStorage.setItem('authToken', accessToken);
-      // On re-récupère l'utilisateur pour avoir les infos à jour
       const response = await getCurrentUser();
       setUser(response.data);
       setIsAuthenticated(true);
     } catch (error) {
       console.error("Failed to complete login", error);
-      apiLogout(); // Nettoyage en cas d'échec
+      apiLogout(); 
       throw error;
     }
   };
@@ -119,7 +116,7 @@ const AuthProvider = ({ children }) => {
 
   // Fonction de déconnexion
   const logout = () => {
-    apiLogout(); // Nettoie le localStorage
+    apiLogout(); 
     setUser(null);
     setIsAuthenticated(false);
   };
@@ -175,7 +172,7 @@ function PublicRoute({ children }) {
   return children;
 }
 
-// --- Composant App principal (Identique) ---
+// --- Composant App principal ---
 function App() {
   return (
     <Router>
@@ -203,6 +200,26 @@ function App() {
               </PublicRoute>
             }
           />
+
+          {/* --- NOUVEAU : Ajout des routes publiques --- */}
+          <Route
+            path="/forgot-password"
+            element={
+              <PublicRoute>
+                <ForgotPasswordPage />
+              </PublicRoute>
+            }
+          />
+          <Route
+            path="/reset-password"
+            element={
+              <PublicRoute>
+                <ResetPasswordPage />
+              </PublicRoute>
+            }
+          />
+          {/* --- FIN NOUVEAUTÉ --- */}
+
 
           {/* Routes protégées (Application principale) */}
           <Route
@@ -248,3 +265,4 @@ function App() {
 }
 
 export default App;
+

@@ -1,55 +1,39 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../App'; // Importe le hook d'authentification
-// Ajout de l'icône ShieldCheck pour le MFA
 import { Wallet, Lock, AlertCircle, Mail, ShieldCheck } from 'lucide-react'; 
 
 function LoginPage() {
-  // --- 1. MISE À JOUR DES IMPORTS useAuth ---
-  // On récupère toutes les nouvelles fonctions de notre Contexte
   const { login, loginWithMfa, completeLogin } = useAuth(); 
   
-  // --- 2. NOUVELLE GESTION D'ÉTAT ---
   const [loginStep, setLoginStep] = useState('credentials'); // 'credentials' ou 'mfa'
   
-  // États pour l'étape 1
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  // États pour l'étape 2
   const [mfaToken, setMfaToken] = useState('');
   const [mfaCode, setMfaCode] = useState('');
 
-  // États globaux
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  // --- FIN GESTION D'ÉTAT ---
 
-
-  // --- 3. GESTIONNAIRE POUR L'ÉTAPE 1 (E-mail/Mot de passe) ---
   const handleCredentialSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
     try {
-      // Appelle la fonction login (étape 1) de App.js
       const responseData = await login(email, password);
 
       if (responseData.mfa_required) {
-        // --- CAS 1: MFA REQUIS ---
-        setMfaToken(responseData.mfa_token); // Stocke le token temporaire
-        setLoginStep('mfa'); // Passe à l'étape 2 (MFA)
+        setMfaToken(responseData.mfa_token); 
+        setLoginStep('mfa'); 
         setLoading(false);
-        setPassword(''); // Efface le mot de passe pour la sécurité
+        setPassword(''); 
       } else {
-        // --- CAS 2: CONNEXION NORMALE (MFA DÉSACTIVÉ) ---
-        // On a reçu le token d'accès final, on finalise la connexion
         await completeLogin(responseData.access_token);
-        // La redirection est gérée par PublicRoute dans App.js
       }
     } catch (err) {
-      // Gère les erreurs de l'étape 1 (Mot de passe incorrect, e-mail non vérifié...)
       if (err.response && err.response.data && err.response.data.detail) {
         if (err.response.data.detail.includes("Email not verified")) {
           setError("Votre compte n'est pas vérifié. Veuillez consulter le lien envoyé à votre adresse e-mail (vérifiez aussi vos spams).");
@@ -63,28 +47,21 @@ function LoginPage() {
     }
   };
 
-  // --- 4. NOUVEAU GESTIONNAIRE POUR L'ÉTAPE 2 (Code MFA) ---
   const handleMfaSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
     try {
-      // Appelle la fonction login (étape 2) de App.js
       const responseData = await loginWithMfa(mfaToken, mfaCode);
-
-      // On a reçu le token d'accès final, on finalise la connexion
       await completeLogin(responseData.access_token);
-      // La redirection est gérée par PublicRoute dans App.js
-
     } catch (err) {
-      // Gère les erreurs de l'étape 2 (Code MFA incorrect, session expirée)
       if (err.response && err.response.data && err.response.data.detail) {
          if (err.response.data.detail.includes("Invalid MFA code")) {
            setError('Code de vérification incorrect.');
          } else {
            setError('Session MFA expirée. Veuillez vous reconnecter.');
-           setLoginStep('credentials'); // Renvoie à l'étape 1
+           setLoginStep('credentials'); 
          }
       } else {
         setError('Une erreur est survenue lors de la vérification MFA.');
@@ -93,20 +70,19 @@ function LoginPage() {
     }
   };
   
-  // --- 5. NOUVEAU GESTIONNAIRE POUR LE BOUTON "RETOUR" ---
   const goBackToCredentials = () => {
     setLoginStep('credentials');
     setError('');
     setMfaToken('');
     setMfaCode('');
-    setPassword(''); // S'assure que le mot de passe est vide
+    setPassword(''); 
   };
 
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-success-50 flex items-center justify-center px-4">
       <div className="max-w-md w-full">
-        {/* Logo et Titre (identique) */}
+        {/* Logo et Titre */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
             <div className="bg-gradient-to-r from-primary-600 to-success-600 text-white rounded-2xl p-4 shadow-xl">
@@ -124,7 +100,6 @@ function LoginPage() {
           </p>
         </div>
 
-        {/* --- 6. AFFICHAGE CONDITIONNEL DES FORMULAIRES --- */}
         <div className="bg-white rounded-2xl shadow-2xl p-8 border border-gray-100">
           
           {loginStep === 'credentials' ? (
@@ -181,6 +156,14 @@ function LoginPage() {
                   />
                 </div>
               </div>
+
+              {/* --- NOUVEAU : Lien Mot de passe oublié --- */}
+              <div className="text-sm text-right">
+                <Link to="/forgot-password" className="font-semibold text-primary-600 hover:text-primary-700">
+                  Mot de passe oublié ?
+                </Link>
+              </div>
+              {/* --- FIN NOUVEAUTÉ --- */}
 
               {/* Bouton de validation Étape 1 */}
               <button
@@ -243,7 +226,7 @@ function LoginPage() {
 
           )}
 
-          {/* --- 7. LIEN CONDITIONNEL (RETOUR ou INSCRIPTION) --- */}
+          {/* Lien conditionnel (Retour ou Inscription) */}
           <div className="mt-6 text-center">
             {loginStep === 'mfa' ? (
               <button
@@ -269,3 +252,4 @@ function LoginPage() {
 }
 
 export default LoginPage;
+

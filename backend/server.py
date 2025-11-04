@@ -27,7 +27,6 @@ import base64
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Clé secrète pour les JWT (JSON Web Tokens)
-# !! IMPORTANT : À définir dans vos variables d'environnement (ex: sur Render) !!
 SECRET_KEY = os.getenv("SECRET_KEY", "u8!l$058fy+bhkeg7z$73=n8m=keb!tp9ys7si2)4$a0i&6%9l")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 jours
@@ -38,17 +37,23 @@ VERIFICATION_TOKEN_EXPIRE_MINUTES = 60 * 24
 # --- NOUVEAU : Token MFA temporaire (5 min) ---
 MFA_TOKEN_EXPIRE_MINUTES = 5
 
+# --- NOUVEAU : Token de réinitialisation de mot de passe (15 min) ---
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 15
+
 # Schéma OAuth2 pour la récupération du token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 # --- Initialisation de FastAPI ---
 app = FastAPI()
 
-# Configuration CORS (Identique)
+# ---
+# --- CORRECTION DU BUG DE CONNEXION (CORS) ---
+# ---
 origins = [
-    "https://budget-1-fbg6.onrender.com",
+    "https://budget-1-fbg6.onrender.com", # CORRIGÉ : "https." -> "https://"
     "http://localhost:3000"
 ]
+# --- FIN DE LA CORRECTION ---
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,7 +68,7 @@ MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/budget_tracker")
 client = AsyncIOMotorClient(MONGO_URL)
 db = client.budget_tracker
 
-# Collections (Ajout de 'users')
+# Collections (Identique)
 users_collection = db.users
 transactions_collection = db.transactions
 categories_collection = db.categories
@@ -79,28 +84,22 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
 
-# ---
-# --- DÉBUT DE LA MODIFICATION ---
-# ---
 class UserPublic(BaseModel):
     id: str
     email: EmailStr
-    mfa_enabled: bool = False # Ajout du champ MFA ici
-# ---
-# --- FIN DE LA MODIFICATION ---
-# ---
+    mfa_enabled: bool = False # Correct
 
 class UserInDB(UserPublic):
     hashed_password: str
     is_verified: Optional[bool] = None
     mfa_secret: Optional[str] = None
 
-# Modèle de réponse pour la connexion (devient plus complexe)
+# Modèle de réponse pour la connexion (Identique)
 class TokenResponse(BaseModel):
     access_token: Optional[str] = None
     token_type: str = "bearer"
     mfa_required: bool = False
-    mfa_token: Optional[str] = None # Le token temporaire pour l'étape MFA
+    mfa_token: Optional[str] = None 
 
 class Token(BaseModel):
     access_token: str
@@ -108,9 +107,9 @@ class Token(BaseModel):
     
 class TokenData(BaseModel):
     email: Optional[str] = None
-    scope: str = "access" # Ajout d'un scope pour différencier les tokens
+    scope: str = "access" 
 
-# --- NOUVEAUX MODÈLES POUR LE FLUX MFA ---
+# --- Modèles MFA (Identiques) ---
 class MfaSetupResponse(BaseModel):
     secret_key: str
     qr_code_data_uri: str
@@ -125,182 +124,132 @@ class MfaLoginRequest(BaseModel):
 class MfaDisableRequest(BaseModel):
     password: str
     mfa_code: str
-# --- FIN DES NOUVEAUX MODÈLES ---
+# --- FIN DES MODÈLES MFA ---
+
+# --- NOUVEAU : Modèles pour le mot de passe oublié ---
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+# --- FIN NOUVEAUTÉ ---
 
 
-# Modèles de données existants (Mis à jour avec user_id)
+# Modèles de données existants (Identiques)
 class Category(BaseModel):
-    id: str
-    user_id: str # Ajouté
-    name: str
-    type: str
-    created_at: datetime
-
+    id: str; user_id: str; name: str; type: str; created_at: datetime
 class SubCategory(BaseModel):
-    id: str
-    user_id: str # Ajouté
-    category_id: str
-    name: str
-    created_at: datetime
-
+    id: str; user_id: str; category_id: str; name: str; created_at: datetime
 class Transaction(BaseModel):
-    id: str
-    user_id: str # Ajouté
-    date: datetime
-    amount: float
-    type: str
-    description: Optional[str] = None
-    category_id: Optional[str] = None
-    subcategory_id: Optional[str] = None
-    created_at: datetime
-
+    id: str; user_id: str; date: datetime; amount: float; type: str
+    description: Optional[str] = None; category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None; created_at: datetime
 class RecurringTransaction(BaseModel):
-    id: str
-    user_id: str # Ajouté
-    amount: float
-    type: str
-    description: Optional[str] = None
-    category_id: Optional[str] = None
-    subcategory_id: Optional[str] = None
-    frequency: str
-    day_of_month: int
-    created_at: datetime
+    id: str; user_id: str; amount: float; type: str
+    description: Optional[str] = None; category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None; frequency: str; day_of_month: int; created_at: datetime
 
 # Modèles de Requête (Identiques)
-class CategoryCreate(BaseModel):
-    name: str
-    type: str
-
-class CategoryUpdate(BaseModel):
-    name: Optional[str] = None
-    type: Optional[str] = None
-
-class SubCategoryCreate(BaseModel):
-    category_id: str
-    name: str
-
-class SubCategoryUpdate(BaseModel):
-    name: Optional[str] = None
-    category_id: Optional[str] = None
-
+class CategoryCreate(BaseModel): name: str; type: str
+class CategoryUpdate(BaseModel): name: Optional[str] = None; type: Optional[str] = None
+class SubCategoryCreate(BaseModel): category_id: str; name: str
+class SubCategoryUpdate(BaseModel): name: Optional[str] = None; category_id: Optional[str] = None
 class TransactionCreate(BaseModel):
-    date: datetime
-    amount: float
-    type: str
-    description: Optional[str] = None
-    category_id: Optional[str] = None
-    subcategory_id: Optional[str] = None
-
+    date: datetime; amount: float; type: str; description: Optional[str] = None
+    category_id: Optional[str] = None; subcategory_id: Optional[str] = None
 class TransactionUpdate(BaseModel):
-    date: Optional[datetime] = None
-    amount: Optional[float] = None
-    type: Optional[str] = None
-    description: Optional[str] = None
-    category_id: Optional[str] = None
-    subcategory_id: Optional[str] = None
-
+    date: Optional[datetime] = None; amount: Optional[float] = None; type: Optional[str] = None
+    description: Optional[str] = None; category_id: Optional[str] = None; subcategory_id: Optional[str] = None
 class RecurringTransactionCreate(BaseModel):
-    amount: float
-    type: str
-    description: Optional[str] = None
-    category_id: Optional[str] = None
-    subcategory_id: Optional[str] = None
-    frequency: str
-    day_of_month: int
-
+    amount: float; type: str; description: Optional[str] = None
+    category_id: Optional[str] = None; subcategory_id: Optional[str] = None
+    frequency: str; day_of_month: int
 class RecurringTransactionUpdate(BaseModel):
-    amount: Optional[float] = None
-    type: Optional[str] = None
-    description: Optional[str] = None
-    category_id: Optional[str] = None
-    subcategory_id: Optional[str] = None
-    frequency: Optional[str] = None
-    day_of_month: Optional[int] = None
-
-class TransactionBulk(BaseModel):
-    transactions: List[TransactionCreate]
-
-
-class PasswordChangeRequest(BaseModel):
-    current_password: str
-    new_password: str
+    amount: Optional[float] = None; type: Optional[str] = None; description: Optional[str] = None
+    category_id: Optional[str] = None; subcategory_id: Optional[str] = None
+    frequency: Optional[str] = None; day_of_month: Optional[int] = None
+class TransactionBulk(BaseModel): transactions: List[TransactionCreate]
+class PasswordChangeRequest(BaseModel): current_password: str; new_password: str
 
 
 # --- Utilitaires de Sécurité (Mis à jour) ---
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Vérifie un mot de passe haché"""
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    """Hache un mot de passe"""
     return pwd_context.hash(password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """Crée un token JWT"""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 # --- Fonctions pour le token de vérification ---
 def create_verification_token(email: str) -> str:
-    """Crée un token JWT spécifique pour la vérification d'e-mail (durée 24h)"""
     expires = datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_TOKEN_EXPIRE_MINUTES)
-    to_encode = {
-        "sub": email,
-        "exp": expires,
-        "scope": "email_verification" # Indique le but de ce token
-    }
+    to_encode = { "sub": email, "exp": expires, "scope": "email_verification" }
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_email_from_verification_token(token: str) -> str:
-    """Valide le token de vérification et retourne l'e-mail"""
     credentials_exception = HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid verification token",
+        status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification token",
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        
-        if payload.get("scope") != "email_verification":
-            raise credentials_exception
-            
+        if payload.get("scope") != "email_verification": raise credentials_exception
         email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-            
+        if email is None: raise credentials_exception
         return email
-    except JWTError: # Gère l'expiration du token
+    except JWTError: 
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Verification token expired or invalid",
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Verification token expired or invalid",
         )
 
-# --- NOUVEAU : Fonctions pour le token MFA ---
+# --- Fonctions pour le token MFA ---
 def create_mfa_token(email: str) -> str:
-    """Crée un token JWT temporaire (5 min) pour l'étape de login MFA"""
     expires = datetime.now(timezone.utc) + timedelta(minutes=MFA_TOKEN_EXPIRE_MINUTES)
-    to_encode = {
-        "sub": email,
-        "exp": expires,
-        "scope": "mfa_login" # Scope très spécifique
-    }
+    to_encode = { "sub": email, "exp": expires, "scope": "mfa_login" }
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_email_from_mfa_token(token: str) -> str:
-    """Valide le token MFA temporaire et retourne l'e-mail"""
     credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or expired MFA session. Please log in again.",
+        status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired MFA session. Please log in again.",
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if payload.get("scope") != "mfa_login":
+        if payload.get("scope") != "mfa_login": raise credentials_exception
+        email: str = payload.get("sub")
+        if email is None: raise credentials_exception
+        return email
+    except JWTError:
+        raise credentials_exception
+
+# --- NOUVEAU : Fonctions pour le token de mot de passe oublié ---
+def create_password_reset_token(email: str) -> str:
+    """Crée un token JWT (15 min) pour la réinitialisation de mot de passe"""
+    expires = datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
+    to_encode = {
+        "sub": email,
+        "exp": expires,
+        "scope": "password_reset" # Scope très spécifique
+    }
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_email_from_password_reset_token(token: str) -> str:
+    """Valide le token de réinitialisation et retourne l'e-mail"""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid or expired password reset token.",
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("scope") != "password_reset":
             raise credentials_exception
             
         email: str = payload.get("sub")
@@ -310,36 +259,27 @@ async def get_email_from_mfa_token(token: str) -> str:
         return email
     except JWTError: # Gère l'expiration
         raise credentials_exception
+# --- FIN NOUVEAUTÉ ---
 
-# --- NOUVEAU : Fonctions pour le QR Code et la vérification TOTP ---
+
+# --- Fonctions TOTP (Identiques) ---
 def verify_mfa_code(secret_key: str, mfa_code: str) -> bool:
-    """Vérifie un code TOTP à 6 chiffres contre un secret"""
     totp = pyotp.TOTP(secret_key)
     return totp.verify(mfa_code)
 
 def generate_qr_code_data_uri(email: str, secret_key: str) -> str:
-    """Génère un QR code au format data:image/png;base64,..."""
-    # Crée l'URI d'approvisionnement que Google Authenticator comprend
     provisioning_uri = pyotp.totp.TOTP(secret_key).provisioning_uri(
-        name=email, 
-        issuer_name="Budget Tracker"
+        name=email, issuer_name="Budget Tracker"
     )
-    
-    # Crée l'image QR code en mémoire
     img = qrcode.make(provisioning_uri)
-    
-    # Sauvegarde l'image dans un buffer binaire
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
-    
-    # Encode l'image en Base64 et crée le Data URI
     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return f"data:image/png;base64,{img_str}"
 
 
 # --- Fonction d'envoi d'e-mail ---
 def send_verification_email(email: str, token: str):
-    """Envoie l'e-mail de vérification via SendGrid (Appel Synchrone)"""
     frontend_url = os.getenv("FRONTEND_URL")
     sender_email = os.getenv("SENDER_EMAIL")
     sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
@@ -371,27 +311,68 @@ def send_verification_email(email: str, token: str):
     )
     try:
         sg = SendGridAPIClient(sendgrid_api_key)
-        response = sg.send(message) # C'est un appel bloquant (synchrone)
-        if response.status_code >= 300: # Gère les erreurs de SendGrid
+        response = sg.send(message) 
+        if response.status_code >= 300: 
              print(f"Erreur SendGrid: {response.body}")
              raise Exception(f"SendGrid error: {response.body}")
     except Exception as e:
         print(f"Erreur critique lors de l'envoi de l'e-mail: {e}")
-        # Lève une exception pour que la route /register puisse annuler l'inscription
         raise HTTPException(status_code=500, detail="Failed to send verification email.")
 
-# --- Fonctions de l'Utilisateur (Mis à jour) ---
+# --- NOUVEAU : Fonction d'envoi d'e-mail de réinitialisation ---
+def send_password_reset_email(email: str, token: str):
+    """Envoie l'e-mail de réinitialisation de mot de passe via SendGrid"""
+    frontend_url = os.getenv("FRONTEND_URL")
+    sender_email = os.getenv("SENDER_EMAIL")
+    sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+
+    # Si les variables manquent, la route parente gérera l'erreur
+    if not all([frontend_url, sender_email, sendgrid_api_key]):
+        print("ERREUR: Variables d'environnement SendGrid manquantes pour le mot de passe oublié.")
+        raise HTTPException(status_code=500, detail="Email service is not configured.")
+
+    # Le lien pointe vers la nouvelle page frontend
+    reset_link = f"{frontend_url}/reset-password?token={token}"
+    
+    message = Mail(
+        from_email=sender_email,
+        to_emails=email,
+        subject='Budget Tracker - Réinitialisation de votre mot de passe',
+        html_content=f"""
+            <div style="font-family: Arial, sans-serif; line-height: 1.6; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                <h2 style="color: #333;">Réinitialisation de mot de passe</h2>
+                <p>Vous avez demandé à réinitialiser votre mot de passe pour Budget Tracker. Cliquez sur le bouton ci-dessous pour continuer :</p>
+                <p style="text-align: center; margin: 25px 0;">
+                    <a href="{reset_link}" style="background-color: #dc3545; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                       Réinitialiser mon mot de passe
+                    </a>
+                </p>
+                <p>Ce lien est valide pendant {PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} minutes.</p>
+                <p style="font-size: 0.9em; color: #777;">Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail.</p>
+            </div>
+        """
+    )
+    try:
+        sg = SendGridAPIClient(sendgrid_api_key)
+        response = sg.send(message)
+        if response.status_code >= 300:
+             print(f"Erreur SendGrid: {response.body}")
+             raise Exception(f"SendGrid error: {response.body}")
+    except Exception as e:
+        print(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send password reset email.")
+# --- FIN NOUVEAUTÉ ---
+
+
+# --- Fonctions de l'Utilisateur (Identiques) ---
 
 async def get_user(email: str) -> Optional[UserInDB]:
-    """Récupère un utilisateur depuis la DB par email"""
     user = await users_collection.find_one({"email": email})
     if user:
-        # Pydantic gère les champs manquants (is_verified, mfa_enabled...)
         return UserInDB(**user)
     return None
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
-    """Décode le token JWT et retourne l'utilisateur actuel"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -399,16 +380,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        
-        # --- NOUVEAU : Vérifie le 'scope' du token ---
-        # On s'assure que c'est un token d'accès, pas un token MFA
-        if payload.get("scope") != "access":
-            raise credentials_exception
-            
+        if payload.get("scope") != "access": raise credentials_exception
         email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-            
+        if email is None: raise credentials_exception
         token_data = TokenData(email=email)
     except JWTError:
         raise credentials_exception
@@ -418,7 +392,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
         raise credentials_exception
     return user
 
-# --- Gestion des Catégories par Défaut (Mis à jour) ---
+# --- Gestion des Catégories par Défaut (Identique) ---
 
 DEFAULT_CATEGORIES = [
     {"name": "Salaire", "type": "Revenu"},
@@ -442,14 +416,13 @@ DEFAULT_CATEGORIES = [
 ]
 
 async def initialize_default_categories(user_id: str):
-    """Crée les catégories par défaut pour un NOUVEL utilisateur"""
     existing_count = await categories_collection.count_documents({"user_id": user_id})
     if existing_count == 0:
         for cat in DEFAULT_CATEGORIES:
             category_id = str(uuid.uuid4())
             await categories_collection.insert_one({
                 "id": category_id,
-                "user_id": user_id, # Ajouté
+                "user_id": user_id, 
                 "name": cat["name"],
                 "type": cat["type"],
                 "created_at": datetime.now(timezone.utc)
@@ -459,7 +432,6 @@ async def initialize_default_categories(user_id: str):
 
 @app.post("/api/auth/register", response_model=UserPublic)
 async def register_user(user: UserCreate):
-    """Crée un nouvel utilisateur et envoie l'e-mail de vérification"""
     existing_user = await get_user(user.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -467,7 +439,6 @@ async def register_user(user: UserCreate):
     hashed_password = get_password_hash(user.password)
     user_id = str(uuid.uuid4())
     
-    # Vérifie si c'est le tout premier utilisateur
     user_count = await users_collection.count_documents({})
     is_first_user = user_count == 0
 
@@ -475,61 +446,35 @@ async def register_user(user: UserCreate):
         "id": user_id,
         "email": user.email,
         "hashed_password": hashed_password,
-        # Le premier utilisateur est auto-vérifié, les autres doivent vérifier
         "is_verified": is_first_user,
-        # Le MFA est désactivé par défaut
         "mfa_enabled": False, 
         "mfa_secret": None
     }
     
     if is_first_user:
-        # C'est le PREMIER utilisateur. On le crée ET on lui attribue les données.
         await users_collection.insert_one(new_user_data)
         
-        await transactions_collection.update_many(
-            {"user_id": {"$exists": False}},
-            {"$set": {"user_id": user_id}}
-        )
-        await categories_collection.update_many(
-            {"user_id": {"$exists": False}},
-            {"$set": {"user_id": user_id}}
-        )
-        await subcategories_collection.update_many(
-            {"user_id": {"$exists": False}},
-            {"$set": {"user_id": user_id}}
-        )
-        await recurring_transactions_collection.update_many(
-            {"user_id": {"$exists": False}},
-            {"$set": {"user_id": user_id}}
-        )
+        await transactions_collection.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": user_id}})
+        await categories_collection.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": user_id}})
+        await subcategories_collection.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": user_id}})
+        await recurring_transactions_collection.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": user_id}})
     else:
-        # C'est un utilisateur suivant.
-        # 1. ESSAYER d'envoyer l'e-mail AVANT de créer l'utilisateur
         try:
             verification_token = create_verification_token(user.email)
-            # Appel synchrone, géré par FastAPI dans un threadpool
             send_verification_email(user.email, verification_token) 
         except Exception as e:
-            # Si l'e-mail échoue, on lève une erreur SANS créer l'utilisateur
             print(f"Échec de l'envoi de l'e-mail, l'utilisateur n'a PAS été créé: {e}")
             raise HTTPException(status_code=500, detail="Impossible d'envoyer l'e-mail de vérification. Vos identifiants SendGrid sont-ils corrects ?")
         
-        # 2. Si l'e-mail a réussi, ON CRÉE l'utilisateur
         await users_collection.insert_one(new_user_data)
-        
-        # 3. On crée ses catégories par défaut
         await initialize_default_categories(user_id)
             
-    return UserPublic(id=user_id, email=user.email)
+    return UserPublic(id=user_id, email=user.email, mfa_enabled=False) # mfa_enabled est False par défaut
 
 
-@app.post("/api/auth/token", response_model=TokenResponse) # Modèle de réponse mis à jour
+@app.post("/api/auth/token", response_model=TokenResponse) 
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """
-    Étape 1 de la connexion : e-mail/mot de passe.
-    Renvoie un token d'accès (si MFA désactivé) ou un token MFA (si MFA activé).
-    """
-    user = await get_user(form_data.username) # form_data.username est l'email
+    user = await get_user(form_data.username)
     
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -538,51 +483,38 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Vérification de l'e-mail
     if user.is_verified is False:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email not verified. Please check your inbox for a verification link.",
         )
     
-    # --- NOUVELLE LOGIQUE MFA ---
     if user.mfa_enabled:
-        # Le MFA est activé. On ne renvoie pas de token d'accès.
-        # On renvoie un token temporaire pour l'étape 2.
         mfa_token = create_mfa_token(user.email)
         return TokenResponse(mfa_required=True, mfa_token=mfa_token)
     else:
-        # Le MFA est désactivé. Connexion normale.
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": user.email, "scope": "access"}, # Ajout du scope "access"
+            data={"sub": user.email, "scope": "access"}, 
             expires_delta=access_token_expires
         )
         return TokenResponse(access_token=access_token, token_type="bearer", mfa_required=False)
-    # --- FIN NOUVELLE LOGIQUE MFA ---
 
-# --- NOUVELLE ROUTE : LOGIN ÉTAPE 2 (MFA) ---
-@app.post("/api/auth/mfa-login", response_model=Token) # Renvoie le token d'accès final
+
+@app.post("/api/auth/mfa-login", response_model=Token)
 async def mfa_login(mfa_data: MfaLoginRequest):
-    """
-    Étape 2 de la connexion : vérification du code MFA.
-    Prend le mfa_token temporaire et le code MFA.
-    Renvoie le token d'accès final.
-    """
     try:
         email = await get_email_from_mfa_token(mfa_data.mfa_token)
     except HTTPException as e:
-        raise e # Renvoie l'erreur 401 si le mfa_token est invalide/expiré
+        raise e 
         
     user = await get_user(email)
     if not user or not user.mfa_enabled or not user.mfa_secret:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled for this user.")
         
-    # Vérifie le code MFA
     if not verify_mfa_code(user.mfa_secret, mfa_data.mfa_code):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code.")
         
-    # Le code est valide ! On génère le token d'accès final.
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email, "scope": "access"}, 
@@ -593,11 +525,9 @@ async def mfa_login(mfa_data: MfaLoginRequest):
 
 @app.get("/api/auth/verify-email")
 async def verify_email_route(token: str):
-    """Valide le token reçu par e-mail et active le compte"""
     try:
         email = await get_email_from_verification_token(token)
     except HTTPException as e:
-        # Renvoie l'erreur de token (invalide ou expiré)
         raise e
     
     user = await get_user(email)
@@ -608,7 +538,6 @@ async def verify_email_route(token: str):
     if user.is_verified:
         return {"message": "Email is already verified"}
         
-    # Met à jour l'utilisateur pour le marquer comme vérifié
     result = await users_collection.update_one(
         {"email": email},
         {"$set": {"is_verified": True}}
@@ -619,47 +548,93 @@ async def verify_email_route(token: str):
     else:
         raise HTTPException(status_code=500, detail="Failed to update user verification status")
 
-# ---
-# --- DÉBUT DE LA MODIFICATION ---
-# ---
+# --- NOUVEAU : Routes pour le mot de passe oublié ---
+@app.post("/api/auth/forgot-password")
+async def forgot_password(data: ForgotPasswordRequest):
+    """
+    Étape 1 du mot de passe oublié : l'utilisateur donne son e-mail.
+    """
+    user = await get_user(data.email)
+    
+    # IMPORTANT : Pour des raisons de sécurité, on ne dit JAMAIS
+    # "Cet e-mail n'existe pas". On renvoie le même message de succès
+    # que l'e-mail existe ou non, pour empêcher l'énumération d'e-mails.
+    if user:
+        try:
+            password_reset_token = create_password_reset_token(user.email)
+            send_password_reset_email(user.email, password_reset_token)
+        except Exception as e:
+            # Si SendGrid échoue, on ne bloque pas l'utilisateur,
+            # mais on log l'erreur côté serveur.
+            print(f"ERREUR CRITIQUE lors de l'envoi de l'e-mail de réinitialisation: {e}")
+            # On renvoie quand même un message de succès pour l'utilisateur
+            pass
+            
+    return {"message": "If an account with that email exists, a password reset link has been sent."}
+
+@app.post("/api/auth/reset-password")
+async def reset_password(data: ResetPasswordRequest):
+    """
+    Étape 2 : L'utilisateur fournit un token (venu de l'e-mail)
+    et son nouveau mot de passe.
+    """
+    try:
+        email = await get_email_from_password_reset_token(data.token)
+    except HTTPException as e:
+        raise e # Renvoie 400 si le token est invalide ou expiré
+    
+    user = await get_user(email)
+    if not user:
+        # Ne devrait jamais arriver si le token est valide, mais par sécurité
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Validation du nouveau mot de passe
+    if len(data.new_password) < 8:
+         raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 8 characters long",
+        )
+            
+    # Hacher et sauvegarder le nouveau mot de passe
+    new_hashed_password = get_password_hash(data.new_password)
+    
+    await users_collection.update_one(
+        {"id": user.id},
+        {"$set": {"hashed_password": new_hashed_password}}
+    )
+    
+    return {"message": "Password updated successfully. You can now log in."}
+# --- FIN NOUVEAUTÉ ---
+
+
 @app.get("/api/users/me", response_model=UserPublic)
 async def read_users_me(current_user: UserInDB = Depends(get_current_user)):
-    """Retourne les informations de l'utilisateur connecté"""
-    # On renvoie maintenant le statut MFA
     return UserPublic(
         id=current_user.id, 
         email=current_user.email, 
         mfa_enabled=current_user.mfa_enabled
     )
-# ---
-# --- FIN DE LA MODIFICATION ---
-# ---
+
 
 @app.put("/api/users/me/change-password")
 async def change_password(
     password_data: PasswordChangeRequest, 
     current_user: UserInDB = Depends(get_current_user)
 ):
-    """Modifie le mot de passe de l'utilisateur connecté"""
-    
-    # 1. Vérifier si l'ancien mot de passe est correct
     if not verify_password(password_data.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect current password",
         )
         
-    # 2. (Optionnel) Validation de la longueur du nouveau mot de passe
     if len(password_data.new_password) < 8:
          raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="New password must be at least 8 characters long",
         )
             
-    # 3. Hacher le nouveau mot de passe
     new_hashed_password = get_password_hash(password_data.new_password)
     
-    # 4. Mettre à jour le mot de passe dans la base de données
     await users_collection.update_one(
         {"id": current_user.id},
         {"$set": {"hashed_password": new_hashed_password}}
@@ -668,27 +643,19 @@ async def change_password(
     return {"message": "Password updated successfully"}
 
 
-# --- NOUVELLES ROUTES POUR LA GESTION DU MFA ---
+# --- Routes MFA (Identiques) ---
 
 @app.get("/api/mfa/setup", response_model=MfaSetupResponse)
 async def mfa_setup_generate(current_user: UserInDB = Depends(get_current_user)):
-    """Génère un nouveau secret MFA et le QR code correspondant"""
-    
     if current_user.mfa_enabled:
         raise HTTPException(status_code=400, detail="MFA is already enabled.")
         
-    # Génère un nouveau secret
     secret_key = pyotp.random_base32()
-    
-    # Génère le QR code
     qr_code_uri = generate_qr_code_data_uri(current_user.email, secret_key)
     
-    # Sauvegarde le secret (temporairement ou définitivement, 
-    # mais il doit être là pour la vérification)
-    # Pour simplifier, on le sauvegarde directement.
     await users_collection.update_one(
         {"id": current_user.id},
-        {"$set": {"mfa_secret": secret_key, "mfa_enabled": False}} # Pas encore activé
+        {"$set": {"mfa_secret": secret_key, "mfa_enabled": False}} 
     )
     
     return MfaSetupResponse(secret_key=secret_key, qr_code_data_uri=qr_code_uri)
@@ -699,19 +666,15 @@ async def mfa_setup_verify(
     mfa_data: MfaVerifyRequest, 
     current_user: UserInDB = Depends(get_current_user)
 ):
-    """Vérifie le code TOTP pour finaliser l'activation du MFA"""
-    
     if current_user.mfa_enabled:
         raise HTTPException(status_code=400, detail="MFA is already enabled.")
         
     if not current_user.mfa_secret:
         raise HTTPException(status_code=400, detail="MFA setup has not been initiated.")
         
-    # Vérifie le code
     if not verify_mfa_code(current_user.mfa_secret, mfa_data.mfa_code):
         raise HTTPException(status_code=400, detail="Invalid MFA code.")
         
-    # Le code est bon ! On active le MFA pour de bon.
     await users_collection.update_one(
         {"id": current_user.id},
         {"$set": {"mfa_enabled": True}}
@@ -725,20 +688,15 @@ async def mfa_disable(
     mfa_data: MfaDisableRequest, 
     current_user: UserInDB = Depends(get_current_user)
 ):
-    """Désactive le MFA pour l'utilisateur"""
-    
     if not current_user.mfa_enabled:
         raise HTTPException(status_code=400, detail="MFA is not enabled.")
         
-    # 1. Vérifier le mot de passe
     if not verify_password(mfa_data.password, current_user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect password.")
         
-    # 2. Vérifier le code MFA
     if not verify_mfa_code(current_user.mfa_secret, mfa_data.mfa_code):
         raise HTTPException(status_code=401, detail="Invalid MFA code.")
         
-    # Tout est bon, on désactive
     await users_collection.update_one(
         {"id": current_user.id},
         {"$set": {"mfa_enabled": False, "mfa_secret": None}}
@@ -746,10 +704,10 @@ async def mfa_disable(
     
     return {"message": "MFA disabled successfully."}
 
-# --- FIN DES NOUVELLES ROUTES MFA ---
+# --- FIN DES Routes MFA ---
 
 
-# --- Routes Métier (Sécurisées) ---
+# --- Routes Métier (Identiques) ---
 
 @app.get("/api/health")
 async def health():
@@ -766,7 +724,7 @@ async def create_category(category: CategoryCreate, current_user: UserInDB = Dep
     category_id = str(uuid.uuid4())
     new_category_data = {
         "id": category_id,
-        "user_id": current_user.id, # Sécurisé
+        "user_id": current_user.id, 
         "name": category.name,
         "type": category.type,
         "created_at": datetime.now(timezone.utc)
@@ -796,10 +754,8 @@ async def delete_category(category_id: str, current_user: UserInDB = Depends(get
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
     
-    # Supprime les sous-catégories de l'utilisateur liées
     await subcategories_collection.delete_many({"category_id": category_id, "user_id": current_user.id})
     
-    # Met à jour les transactions de l'utilisateur liées
     await transactions_collection.update_many(
         {"category_id": category_id, "user_id": current_user.id},
         {"$set": {"category_id": None, "subcategory_id": None}}
@@ -816,7 +772,6 @@ async def get_subcategories(current_user: UserInDB = Depends(get_current_user)):
 
 @app.post("/api/subcategories")
 async def create_subcategory(subcategory: SubCategoryCreate, current_user: UserInDB = Depends(get_current_user)):
-    # Vérifie que la catégorie parente appartient à l'utilisateur
     category = await categories_collection.find_one({"id": subcategory.category_id, "user_id": current_user.id})
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -824,7 +779,7 @@ async def create_subcategory(subcategory: SubCategoryCreate, current_user: UserI
     subcategory_id = str(uuid.uuid4())
     new_subcategory_data = {
         "id": subcategory_id,
-        "user_id": current_user.id, # Sécurisé
+        "user_id": current_user.id, 
         "category_id": subcategory.category_id,
         "name": subcategory.name,
         "created_at": datetime.now(timezone.utc)
@@ -854,7 +809,6 @@ async def delete_subcategory(subcategory_id: str, current_user: UserInDB = Depen
     if not existing:
         raise HTTPException(status_code=404, detail="SubCategory not found")
     
-    # Met à jour les transactions de l'utilisateur liées
     await transactions_collection.update_many(
         {"subcategory_id": subcategory_id, "user_id": current_user.id},
         {"$set": {"subcategory_id": None}}
@@ -872,7 +826,7 @@ async def get_transactions(
     search: Optional[str] = None,
     current_user: UserInDB = Depends(get_current_user)
 ):
-    query = {"user_id": current_user.id} # Sécurisé
+    query = {"user_id": current_user.id} 
     
     if start_date and end_date:
         query["date"] = {
@@ -887,23 +841,15 @@ async def get_transactions(
         query["description"] = {"$regex": search, "$options": "i"}
     
     transactions = await transactions_collection.find(query).sort("date", -1).to_list(None)
-    return [{
-        "id": t["id"],
-        "date": t["date"],
-        "amount": t["amount"],
-        "type": t["type"],
-        "description": t.get("description"),
-        "category_id": t.get("category_id"),
-        "subcategory_id": t.get("subcategory_id"),
-        "created_at": t["created_at"]
-    } for t in transactions]
+    # Pydantic/FastAPI s'occupe de la sérialisation, pas besoin de boucle manuelle
+    return [t for t in transactions]
 
 @app.post("/api/transactions")
 async def create_transaction(transaction: TransactionCreate, current_user: UserInDB = Depends(get_current_user)):
     transaction_id = str(uuid.uuid4())
     new_transaction_data = {
         "id": transaction_id,
-        "user_id": current_user.id, # Sécurisé
+        "user_id": current_user.id, 
         "date": transaction.date,
         "amount": transaction.amount,
         "type": transaction.type,
@@ -920,9 +866,10 @@ async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB
     new_transactions_data = []
     for transaction in data.transactions:
         transaction_id = str(uuid.uuid4())
-        new_transaction_data = {
+        # C'est la variable que vous utilisez ci-dessous
+        new_transaction_doc = { 
             "id": transaction_id,
-            "user_id": current_user.id, # Sécurisé
+            "user_id": current_user.id, 
             "date": transaction.date,
             "amount": transaction.amount,
             "type": transaction.type,
@@ -931,7 +878,7 @@ async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB
             "subcategory_id": transaction.subcategory_id,
             "created_at": datetime.now(timezone.utc)
         }
-        new_transactions_data.append(new_transaction_data)
+        new_transactions_data.append(new_transaction_doc) # Utilisation de la bonne variable
     
     if not new_transactions_data:
         raise HTTPException(status_code=400, detail="No transactions to import.")
@@ -956,16 +903,8 @@ async def update_transaction(transaction_id: str, transaction: TransactionUpdate
         )
     
     updated = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
-    return {
-        "id": updated["id"],
-        "date": updated["date"],
-        "amount": updated["amount"],
-        "type": updated["type"],
-        "description": updated.get("description"),
-        "category_id": updated.get("category_id"),
-        "subcategory_id": updated.get("subcategory_id"),
-        "created_at": updated["created_at"]
-    }
+    # Pydantic/FastAPI s'occupe de la sérialisation
+    return updated
 
 @app.delete("/api/transactions/{transaction_id}")
 async def delete_transaction(transaction_id: str, current_user: UserInDB = Depends(get_current_user)):
@@ -980,24 +919,15 @@ async def delete_transaction(transaction_id: str, current_user: UserInDB = Depen
 @app.get("/api/recurring-transactions")
 async def get_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
     recurring = await recurring_transactions_collection.find({"user_id": current_user.id}).to_list(None)
-    return [{
-        "id": r["id"],
-        "amount": r["amount"],
-        "type": r["type"],
-        "description": r.get("description"),
-        "category_id": r.get("category_id"),
-        "subcategory_id": r.get("subcategory_id"),
-        "frequency": r["frequency"],
-        "day_of_month": r["day_of_month"],
-        "created_at": r["created_at"]
-    } for r in recurring]
+    # Pydantic/FastAPI s'occupe de la sérialisation
+    return [r for r in recurring]
 
 @app.post("/api/recurring-transactions")
 async def create_recurring_transaction(recurring: RecurringTransactionCreate, current_user: UserInDB = Depends(get_current_user)):
     recurring_id = str(uuid.uuid4())
     new_recurring_data = {
         "id": recurring_id,
-        "user_id": current_user.id, # Sécurisé
+        "user_id": current_user.id, 
         "amount": recurring.amount,
         "type": recurring.type,
         "description": recurring.description,
@@ -1024,17 +954,8 @@ async def update_recurring_transaction(recurring_id: str, recurring: RecurringTr
         )
     
     updated = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
-    return {
-        "id": updated["id"],
-        "amount": updated["amount"],
-        "type": updated["type"],
-        "description": updated.get("description"),
-        "category_id": updated.get("category_id"),
-        "subcategory_id": updated.get("subcategory_id"),
-        "frequency": updated["frequency"],
-        "day_of_month": updated["day_of_month"],
-        "created_at": updated["created_at"]
-    }
+    # Pydantic/FastAPI s'occupe de la sérialisation
+    return updated
 
 @app.delete("/api/recurring-transactions/{recurring_id}")
 async def delete_recurring_transaction(recurring_id: str, current_user: UserInDB = Depends(get_current_user)):
@@ -1047,7 +968,6 @@ async def delete_recurring_transaction(recurring_id: str, current_user: UserInDB
 
 @app.post("/api/recurring-transactions/generate")
 async def generate_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
-    """Génère les transactions récurrentes de l'utilisateur pour le mois actuel"""
     now = datetime.now(timezone.utc)
     current_month = now.month
     current_year = now.year
@@ -1058,9 +978,8 @@ async def generate_recurring_transactions(current_user: UserInDB = Depends(get_c
     
     for recurring in recurring_list:
         if recurring["frequency"] == "Mensuel" and current_day >= recurring["day_of_month"]:
-            # Vérifie si une transaction similaire existe DEJA pour CE MOIS et CET UTILISATEUR
             existing = await transactions_collection.find_one({
-                "user_id": current_user.id, # Sécurisé
+                "user_id": current_user.id, 
                 "description": recurring.get("description"),
                 "amount": recurring["amount"],
                 "type": recurring["type"],
@@ -1075,7 +994,7 @@ async def generate_recurring_transactions(current_user: UserInDB = Depends(get_c
                 transaction_date = datetime(current_year, current_month, recurring["day_of_month"], tzinfo=timezone.utc)
                 await transactions_collection.insert_one({
                     "id": transaction_id,
-                    "user_id": current_user.id, # Sécurisé
+                    "user_id": current_user.id, 
                     "date": transaction_date,
                     "amount": recurring["amount"],
                     "type": recurring["type"],
@@ -1092,20 +1011,17 @@ async def generate_recurring_transactions(current_user: UserInDB = Depends(get_c
 # Dashboard Statistics (Sécurisé)
 @app.get("/api/dashboard/stats")
 async def get_dashboard_stats(
-    # Remplacement de 'year' et 'month' par des dates en string (format YYYY-MM-DD)
     start_date_str: Optional[str] = None, 
     end_date_str: Optional[str] = None, 
     current_user: UserInDB = Depends(get_current_user)
 ):
     now = datetime.now(timezone.utc)
     
-    # --- Épargne globale (pour l'utilisateur) ---
-    # (Logique inchangée)
     global_revenus = 0
     global_depenses = 0
     
     pipeline_revenus = [
-        {"$match": {"type": "Revenu", "user_id": current_user.id}}, # Sécurisé
+        {"$match": {"type": "Revenu", "user_id": current_user.id}}, 
         {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
     ]
     revenus_result = await transactions_collection.aggregate(pipeline_revenus).to_list(None)
@@ -1113,7 +1029,7 @@ async def get_dashboard_stats(
         global_revenus = revenus_result[0]['total']
 
     pipeline_depenses = [
-        {"$match": {"type": "Dépense", "user_id": current_user.id}}, # Sécurisé
+        {"$match": {"type": "Dépense", "user_id": current_user.id}}, 
         {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
     ]
     depenses_result = await transactions_collection.aggregate(pipeline_depenses).to_list(None)
@@ -1121,9 +1037,7 @@ async def get_dashboard_stats(
         global_depenses = depenses_result[0]['total']
 
     global_epargne_totale = global_revenus - global_depenses
-    # --- Fin Épargne globale ---
-
-    # --- NOUVELLE Logique de Période ---
+    
     start_date = None
     end_date = None
     display_period = ""
@@ -1131,21 +1045,13 @@ async def get_dashboard_stats(
 
     if start_date_str and end_date_str:
         try:
-            # start_date est le début du jour (00:00:00)
             start_date = datetime.fromisoformat(start_date_str).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-            
-            # Date de fin (inclusive) pour l'affichage
             temp_end_date_display = datetime.fromisoformat(end_date_str).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
-            
-            # end_date pour la requête est le *début* du jour *suivant* (pour une requête $lt)
             end_date = temp_end_date_display + timedelta(days=1)
-            
-            # Formatage de la période d'affichage en français
             display_period = f"{start_date.strftime('%d/%m/%Y')} - {temp_end_date_display.strftime('%d/%m/%Y')}"
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Please use YYYY-MM-DD.")
     else:
-        # Défaut: Si aucune date n'est fournie, afficher le mois actuel
         start_date = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
         if now.month == 12:
             end_date = datetime(now.year + 1, 1, 1, tzinfo=timezone.utc)
@@ -1154,59 +1060,32 @@ async def get_dashboard_stats(
         
         display_period = f"{month_names_full[now.month - 1]} {now.year}"
     
-    # L'année cible pour le graphique en barres sera l'année de la date de DÉBUT
     target_year = start_date.year
-    # --- FIN NOUVELLE Logique de Période ---
-
-    # 1. Stats Période (utilise les nouvelles start_date/end_date)
+    
     period_transactions = await transactions_collection.find({
         "date": {"$gte": start_date, "$lt": end_date},
-        "user_id": current_user.id # Sécurisé
+        "user_id": current_user.id
     }).to_list(None)
     
     revenus = sum(t["amount"] for t in period_transactions if t["type"] == "Revenu")
     depenses = sum(t["amount"] for t in period_transactions if t["type"] == "Dépense")
     epargne = revenus - depenses
     
-    # 2. Camembert Dépenses (utilise les nouvelles start_date/end_date)
     pipeline = [
         {
             "$match": {
                 "date": {"$gte": start_date, "$lt": end_date},
                 "type": "Dépense",
-                "user_id": current_user.id # Sécurisé
+                "user_id": current_user.id 
             }
         },
-        {
-            "$group": {
-                "_id": "$category_id",
-                "value": {"$sum": "$amount"}
-            }
-        },
-        {
-            "$lookup": {
-                "from": "categories",
-                "localField": "_id",
-                "foreignField": "id",
-                "as": "category_details"
-            }
-        },
-        {
-            "$unwind": "$category_details"
-        },
-        {
-            "$project": {
-                "_id": 0,
-                "name": "$category_details.name",
-                "value": "$value"
-            }
-        }
+        { "$group": { "_id": "$category_id", "value": {"$sum": "$amount"} } },
+        { "$lookup": { "from": "categories", "localField": "_id", "foreignField": "id", "as": "category_details" } },
+        { "$unwind": "$category_details" },
+        { "$project": { "_id": 0, "name": "$category_details.name", "value": "$value" } }
     ]
-    expense_breakdown_cursor = transactions_collection.aggregate(pipeline)
-    expense_breakdown = await expense_breakdown_cursor.to_list(None)
+    expense_breakdown = await transactions_collection.aggregate(pipeline).to_list(None)
 
-    # 3. Graphique Barres (utilise target_year, logique inchangée)
-    # Affiche toujours les 12 mois de l'année de la date de début
     monthly_data = []
     month_names = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
     
@@ -1220,14 +1099,11 @@ async def get_dashboard_stats(
         
         month_transactions = await transactions_collection.find({
             "date": {"$gte": month_start, "$lt": month_end},
-            "user_id": current_user.id # Sécurisé
+            "user_id": current_user.id
         }).to_list(None)
         
         month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Revenu")
-        
-        # --- CORRECTION DE LA FAUTE DE FRAPPE ---
         month_depenses = sum(t["amount"] for t in month_transactions if t["type"] == "Dépense")
-        # --- FIN CORRECTION ---
         
         monthly_data.append({
             "month": month_names[i],
@@ -1250,3 +1126,4 @@ async def get_dashboard_stats(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
+
