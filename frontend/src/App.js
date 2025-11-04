@@ -14,7 +14,7 @@ import VerifyEmailPage from './pages/VerifyEmailPage';
 // On importe les fonctions *spécifiques* de l'API dont on aura besoin
 import { 
   login as apiLogin, 
-  mfaLogin as apiMfaLogin, // On l'ajoutera à api.js ensuite
+  mfaLogin as apiMfaLogin, // Import de la nouvelle fonction
   register as apiRegister, 
   logout as apiLogout, 
   getCurrentUser 
@@ -66,7 +66,7 @@ const AuthProvider = ({ children }) => {
       const response = await apiLogin(email, password);
       // Renvoie la réponse (ex: { mfa_required: true, mfa_token: '...' })
       // ou { mfa_required: false, access_token: '...' }
-      return response.data;
+      return response.data; // On renvoie .data
     } catch (error) {
       console.error("Failed login step 1", error);
       throw error; 
@@ -81,7 +81,7 @@ const AuthProvider = ({ children }) => {
     try {
       const response = await apiMfaLogin(mfaToken, mfaCode);
       // Renvoie la réponse (ex: { access_token: '...' })
-      return response.data;
+      return response.data; // On renvoie .data
     } catch (error) {
       console.error("Failed login step 2 (MFA)", error);
       throw error;
