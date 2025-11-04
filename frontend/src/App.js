@@ -41,7 +41,7 @@ const AuthProvider = ({ children }) => {
       if (token) {
         try {
           const response = await getCurrentUser(); 
-          setUser(response.data);
+          setUser(response.data); // Stocke l'utilisateur (avec mfa_enabled)
           setIsAuthenticated(true);
         } catch (error) {
           apiLogout(); 
@@ -95,8 +95,7 @@ const AuthProvider = ({ children }) => {
   const completeLogin = async (accessToken) => {
     try {
       localStorage.setItem('authToken', accessToken);
-      // On re-configure l'intercepteur d'api.js au cas où
-      // (getCurrentUser le fera aussi, mais c'est plus sûr)
+      // On re-récupère l'utilisateur pour avoir les infos à jour
       const response = await getCurrentUser();
       setUser(response.data);
       setIsAuthenticated(true);

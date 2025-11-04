@@ -76,7 +76,7 @@ export const login = async (email, password) => {
 
   // --- MODIFICATION ---
   // On ne sauvegarde PLUS le token ici.
-  // On renvoie la réponse complète pour que App.js puisse la traiter.
+  // On renvoie la réponse complète (pas seulement response.data) pour App.js.
   return response;
 };
 
