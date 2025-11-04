@@ -34,6 +34,7 @@ packaging==25.0
 pandas==2.3.3
 passlib==1.7.4
 pathspec==0.12.1
+Pillow==10.4.0
 platformdirs==4.5.0
 pluggy==1.6.0
 pyasn1==0.6.1
@@ -51,8 +52,10 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.0.0
 python-jose==3.3.0
 python-multipart==0.0.6
+pyotp==2.9.0
 pytokens==0.2.0
 pytz==2025.2
+qrcode==7.4.2
 requests==2.32.5
 requests-oauthlib==2.0.0
 rich==14.2.0

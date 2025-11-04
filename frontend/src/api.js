@@ -38,21 +38,20 @@ api.interceptors.response.use(
   (error) => {
     // Si on reçoit une erreur 401 (Non autorisé)
     if (error.response && error.response.status === 401) {
-      // Le token est invalide ou expiré
-      localStorage.removeItem('authToken');
       
-      // On redirige l'utilisateur vers la page de connexion
-      // On utilise window.location pour forcer un rafraîchissement complet
-      // et vider l'état de l'application.
+      // --- MODIFICATION : Ne pas déconnecter sur la page de connexion ---
+      // Si l'erreur 401 se produit AILLEURS que sur /login
+      // (par ex: token expiré sur le dashboard), alors on déconnecte.
+      // Si l'erreur 401 se produit sur /login (mot de passe incorrect),
+      // on laisse le composant gérer l'erreur.
       if (window.location.pathname !== '/login') {
+         localStorage.removeItem('authToken');
          window.location.href = '/login';
+         return Promise.reject(new Error('Session expirée, veuillez vous reconnecter.'));
       }
-
-      // On retourne une promesse rejetée pour arrêter la chaîne
-      return Promise.reject(new Error('Session expirée, veuillez vous reconnecter.'));
     }
     
-    // Pour toutes les autres erreurs, on les retourne
+    // Pour toutes les autres erreurs (y compris 401 sur /login), on les retourne
     return Promise.reject(error);
   }
 );
@@ -61,9 +60,8 @@ api.interceptors.response.use(
 // --- Fonctions d'Authentification ---
 
 /**
- * Tente de se connecter.
- * Note : Le backend (OAuth2PasswordRequestForm) attend des données
- * en 'application/x-www-form-urlencoded' et non en JSON.
+ * Étape 1 de la connexion (Email/Pass).
+ * Renvoie la réponse du backend (soit un token d'accès, soit une demande MFA).
  */
 export const login = async (email, password) => {
   const params = new URLSearchParams();
@@ -76,15 +74,30 @@ export const login = async (email, password) => {
     },
   });
 
-  if (response.data.access_token) {
-    localStorage.setItem('authToken', response.data.access_token);
-  }
-  return response.data;
+  // --- MODIFICATION ---
+  // On ne sauvegarde PLUS le token ici.
+  // On renvoie la réponse complète pour que App.js puisse la traiter.
+  return response;
 };
+
+// --- NOUVELLE FONCTION ---
+/**
+ * Étape 2 de la connexion (Code MFA).
+ * Envoie le token temporaire et le code MFA.
+ */
+export const mfaLogin = async (mfaToken, mfaCode) => {
+  const response = await api.post('/api/auth/mfa-login', {
+    mfa_token: mfaToken,
+    mfa_code: mfaCode,
+  });
+  // Ceci renverra le token d'accès final si le code est bon
+  return response;
+};
+// --- FIN NOUVEAUTÉ ---
+
 
 /**
  * Gère l'inscription d'un nouvel utilisateur.
- * (Celui-ci attend du JSON, géré par défaut par notre instance 'api')
  */
 export const register = async (email, password) => {
   return await api.post('/api/auth/register', { email, password });
@@ -103,6 +116,34 @@ export const logout = () => {
 export const getCurrentUser = async () => {
   return await api.get('/api/users/me');
 };
+
+
+// --- NOUVELLES FONCTIONS DE GESTION MFA (POUR LES PARAMÈTRES) ---
+
+/**
+ * Demande au backend de générer un nouveau secret MFA et un QR code.
+ */
+export const mfaSetup = async () => {
+  return await api.get('/api/mfa/setup');
+};
+
+/**
+ * Vérifie le code MFA pour finaliser l'activation.
+ */
+export const mfaVerify = async (mfaCode) => {
+  return await api.post('/api/mfa/verify', { mfa_code: mfaCode });
+};
+
+/**
+ * Demande la désactivation du MFA (nécessite mot de passe + code MFA).
+ */
+export const mfaDisable = async (password, mfaCode) => {
+  return await api.post('/api/mfa/disable', {
+    password: password,
+    mfa_code: mfaCode,
+  });
+};
+// --- FIN NOUVEAUTÉ ---
 
 
 // On exporte l'instance 'api' par défaut pour les appels classiques

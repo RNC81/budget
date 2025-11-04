@@ -8,11 +8,17 @@ import Layout from './components/Layout';
 // Import des nouvelles pages
 import LoginPage from './pages/LoginPage'; 
 import RegisterPage from './pages/RegisterPage';
-// --- 1. IMPORTATION DE LA NOUVELLE PAGE ---
 import VerifyEmailPage from './pages/VerifyEmailPage'; 
 
-// Import des fonctions d'authentification depuis api.js
-import { login as apiLogin, register as apiRegister, logout as apiLogout, getCurrentUser } from './api';
+// --- 1. MODIFICATION DES IMPORTS ---
+// On importe les fonctions *spécifiques* de l'API dont on aura besoin
+import { 
+  login as apiLogin, 
+  mfaLogin as apiMfaLogin, // On l'ajoutera à api.js ensuite
+  register as apiRegister, 
+  logout as apiLogout, 
+  getCurrentUser 
+} from './api';
 
 // --- Création du Contexte d'Authentification ---
 const AuthContext = createContext(null);
@@ -49,33 +55,67 @@ const AuthProvider = ({ children }) => {
     checkAuthStatus();
   }, []);
 
-  // Fonction de connexion
+  // --- 2. MODIFICATION DE LA FONCTION DE CONNEXION ---
+  
+  /**
+   * Étape 1 de la connexion (e-mail/mot de passe).
+   * N'authentifie PAS l'utilisateur, mais renvoie la réponse du backend.
+   */
   const login = async (email, password) => {
     try {
-      await apiLogin(email, password); 
-      const response = await getCurrentUser(); 
-      setUser(response.data);
-      setIsAuthenticated(true);
+      const response = await apiLogin(email, password);
+      // Renvoie la réponse (ex: { mfa_required: true, mfa_token: '...' })
+      // ou { mfa_required: false, access_token: '...' }
+      return response.data;
     } catch (error) {
-      console.error("Failed to login", error);
+      console.error("Failed login step 1", error);
       throw error; 
     }
   };
 
-  // --- 2. MODIFICATION DE LA FONCTION D'INSCRIPTION ---
-  // Elle n'essaie plus de se connecter automatiquement.
-  const register = async (email, password) => {
+  /**
+   * Étape 2 de la connexion (Code MFA).
+   * N'authentifie PAS l'utilisateur, mais renvoie le token d'accès final.
+   */
+  const loginWithMfa = async (mfaToken, mfaCode) => {
     try {
-      // On se contente de créer l'utilisateur.
-      // Le backend enverra l'e-mail.
-      await apiRegister(email, password);
-      // On ne fait PAS 'await login()' ici.
+      const response = await apiMfaLogin(mfaToken, mfaCode);
+      // Renvoie la réponse (ex: { access_token: '...' })
+      return response.data;
     } catch (error) {
-      console.error("Failed to register", error);
-      throw error; // Renvoie l'erreur (ex: "Email already registered")
+      console.error("Failed login step 2 (MFA)", error);
+      throw error;
     }
   };
-  // --- FIN MODIFICATION ---
+
+  /**
+   * Étape finale : L'authentification est réussie.
+   * Met à jour l'état de l'application.
+   */
+  const completeLogin = async (accessToken) => {
+    try {
+      localStorage.setItem('authToken', accessToken);
+      // On re-configure l'intercepteur d'api.js au cas où
+      // (getCurrentUser le fera aussi, mais c'est plus sûr)
+      const response = await getCurrentUser();
+      setUser(response.data);
+      setIsAuthenticated(true);
+    } catch (error) {
+      console.error("Failed to complete login", error);
+      apiLogout(); // Nettoyage en cas d'échec
+      throw error;
+    }
+  };
+
+  // Fonction d'inscription
+  const register = async (email, password) => {
+    try {
+      await apiRegister(email, password);
+    } catch (error) {
+      console.error("Failed to register", error);
+      throw error; 
+    }
+  };
 
 
   // Fonction de déconnexion
@@ -90,7 +130,9 @@ const AuthProvider = ({ children }) => {
     user,
     isAuthenticated,
     isLoading,
-    login,
+    login, // Étape 1
+    loginWithMfa, // Étape 2
+    completeLogin, // Étape finale
     register,
     logout,
   };
@@ -103,7 +145,7 @@ const AuthProvider = ({ children }) => {
 };
 
 
-// --- Route Protégée (Mise à jour) ---
+// --- Route Protégée (Identique) ---
 function ProtectedRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
@@ -119,7 +161,7 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
-// --- Route Publique (Nouvelle) ---
+// --- Route Publique (Identique) ---
 function PublicRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
 
@@ -134,20 +176,16 @@ function PublicRoute({ children }) {
   return children;
 }
 
-// --- Composant App principal (Mis à jour) ---
+// --- Composant App principal (Identique) ---
 function App() {
   return (
     <Router>
       <AuthProvider> 
         <Routes>
-          {/* --- 3. AJOUT DE LA NOUVELLE ROUTE --- */}
-          {/* C'est une page publique, mais pas enveloppée dans PublicRoute 
-              car on doit y accéder même si on est "à moitié" authentifié. */}
           <Route
             path="/verify-email"
             element={<VerifyEmailPage />}
           />
-          {/* --- FIN AJOUT --- */}
 
           {/* Routes publiques (Connexion / Inscription) */}
           <Route

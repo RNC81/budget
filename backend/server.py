@@ -10,9 +10,15 @@ import uuid
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 
-# --- NOUVEAUX IMPORTS POUR SENDGRID ---
+# --- IMPORTS POUR SENDGRID ---
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+
+# --- NOUVEAUX IMPORTS POUR MFA (TOTP) ---
+import pyotp
+import qrcode
+import io
+import base64
 # --- FIN DES NOUVEAUX IMPORTS ---
 
 # --- Configuration de la Sécurité (Nouveau) ---
@@ -26,8 +32,11 @@ SECRET_KEY = os.getenv("SECRET_KEY", "u8!l$058fy+bhkeg7z$73=n8m=keb!tp9ys7si2)4$
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 jours
 
-# --- NOUVEAU : Token de vérification (24h) ---
+# Token de vérification (24h)
 VERIFICATION_TOKEN_EXPIRE_MINUTES = 60 * 24
+
+# --- NOUVEAU : Token MFA temporaire (5 min) ---
+MFA_TOKEN_EXPIRE_MINUTES = 5
 
 # Schéma OAuth2 pour la récupération du token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
@@ -75,15 +84,43 @@ class UserPublic(UserBase):
 
 class UserInDB(UserPublic):
     hashed_password: str
-    # is_verified est optionnel pour les comptes existants ("grandfathered")
     is_verified: Optional[bool] = None
+    # --- NOUVEAUX CHAMPS MFA ---
+    mfa_enabled: bool = False
+    mfa_secret: Optional[str] = None
+
+# Modèle de réponse pour la connexion (devient plus complexe)
+class TokenResponse(BaseModel):
+    access_token: Optional[str] = None
+    token_type: str = "bearer"
+    mfa_required: bool = False
+    mfa_token: Optional[str] = None # Le token temporaire pour l'étape MFA
 
 class Token(BaseModel):
     access_token: str
     token_type: str
-
+    
 class TokenData(BaseModel):
     email: Optional[str] = None
+    scope: str = "access" # Ajout d'un scope pour différencier les tokens
+
+# --- NOUVEAUX MODÈLES POUR LE FLUX MFA ---
+class MfaSetupResponse(BaseModel):
+    secret_key: str
+    qr_code_data_uri: str
+
+class MfaVerifyRequest(BaseModel):
+    mfa_code: str
+
+class MfaLoginRequest(BaseModel):
+    mfa_token: str
+    mfa_code: str
+
+class MfaDisableRequest(BaseModel):
+    password: str
+    mfa_code: str
+# --- FIN DES NOUVEAUX MODÈLES ---
+
 
 # Modèles de données existants (Mis à jour avec user_id)
 class Category(BaseModel):
@@ -204,7 +241,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# --- NOUVEAU : Fonctions pour le token de vérification ---
+# --- Fonctions pour le token de vérification ---
 def create_verification_token(email: str) -> str:
     """Crée un token JWT spécifique pour la vérification d'e-mail (durée 24h)"""
     expires = datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_TOKEN_EXPIRE_MINUTES)
@@ -237,9 +274,64 @@ async def get_email_from_verification_token(token: str) -> str:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Verification token expired or invalid",
         )
-# --- FIN NOUVEAU ---
 
-# --- NOUVEAU : Fonction d'envoi d'e-mail ---
+# --- NOUVEAU : Fonctions pour le token MFA ---
+def create_mfa_token(email: str) -> str:
+    """Crée un token JWT temporaire (5 min) pour l'étape de login MFA"""
+    expires = datetime.now(timezone.utc) + timedelta(minutes=MFA_TOKEN_EXPIRE_MINUTES)
+    to_encode = {
+        "sub": email,
+        "exp": expires,
+        "scope": "mfa_login" # Scope très spécifique
+    }
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_email_from_mfa_token(token: str) -> str:
+    """Valide le token MFA temporaire et retourne l'e-mail"""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired MFA session. Please log in again.",
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("scope") != "mfa_login":
+            raise credentials_exception
+            
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+            
+        return email
+    except JWTError: # Gère l'expiration
+        raise credentials_exception
+
+# --- NOUVEAU : Fonctions pour le QR Code et la vérification TOTP ---
+def verify_mfa_code(secret_key: str, mfa_code: str) -> bool:
+    """Vérifie un code TOTP à 6 chiffres contre un secret"""
+    totp = pyotp.TOTP(secret_key)
+    return totp.verify(mfa_code)
+
+def generate_qr_code_data_uri(email: str, secret_key: str) -> str:
+    """Génère un QR code au format data:image/png;base64,..."""
+    # Crée l'URI d'approvisionnement que Google Authenticator comprend
+    provisioning_uri = pyotp.totp.TOTP(secret_key).provisioning_uri(
+        name=email, 
+        issuer_name="Budget Tracker"
+    )
+    
+    # Crée l'image QR code en mémoire
+    img = qrcode.make(provisioning_uri)
+    
+    # Sauvegarde l'image dans un buffer binaire
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    
+    # Encode l'image en Base64 et crée le Data URI
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{img_str}"
+
+
+# --- Fonction d'envoi d'e-mail ---
 def send_verification_email(email: str, token: str):
     """Envoie l'e-mail de vérification via SendGrid (Appel Synchrone)"""
     frontend_url = os.getenv("FRONTEND_URL")
@@ -281,13 +373,14 @@ def send_verification_email(email: str, token: str):
         print(f"Erreur critique lors de l'envoi de l'e-mail: {e}")
         # Lève une exception pour que la route /register puisse annuler l'inscription
         raise HTTPException(status_code=500, detail="Failed to send verification email.")
-# --- FIN NOUVEAU ---
+
+# --- Fonctions de l'Utilisateur (Mis à jour) ---
 
 async def get_user(email: str) -> Optional[UserInDB]:
     """Récupère un utilisateur depuis la DB par email"""
     user = await users_collection.find_one({"email": email})
     if user:
-        # Pydantic gérera l'absence de 'is_verified' et le mettra à None
+        # Pydantic gère les champs manquants (is_verified, mfa_enabled...)
         return UserInDB(**user)
     return None
 
@@ -300,9 +393,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        # --- NOUVEAU : Vérifie le 'scope' du token ---
+        # On s'assure que c'est un token d'accès, pas un token MFA
+        if payload.get("scope") != "access":
+            raise credentials_exception
+            
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
+            
         token_data = TokenData(email=email)
     except JWTError:
         raise credentials_exception
@@ -370,7 +470,10 @@ async def register_user(user: UserCreate):
         "email": user.email,
         "hashed_password": hashed_password,
         # Le premier utilisateur est auto-vérifié, les autres doivent vérifier
-        "is_verified": is_first_user 
+        "is_verified": is_first_user,
+        # Le MFA est désactivé par défaut
+        "mfa_enabled": False, 
+        "mfa_secret": None
     }
     
     if is_first_user:
@@ -414,9 +517,12 @@ async def register_user(user: UserCreate):
     return UserPublic(id=user_id, email=user.email)
 
 
-@app.post("/api/auth/token", response_model=Token)
+@app.post("/api/auth/token", response_model=TokenResponse) # Modèle de réponse mis à jour
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """Fournit un token d'accès, en vérifiant si l'e-mail est vérifié"""
+    """
+    Étape 1 de la connexion : e-mail/mot de passe.
+    Renvoie un token d'accès (si MFA désactivé) ou un token MFA (si MFA activé).
+    """
     user = await get_user(form_data.username) # form_data.username est l'email
     
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -426,24 +532,59 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # --- NOUVELLE VÉRIFICATION DE L'E-MAIL ---
-    # On bloque si 'is_verified' est explicitement 'False'.
-    # On autorise si c'est 'True' OU 'None' (pour les anciens comptes)
+    # Vérification de l'e-mail
     if user.is_verified is False:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email not verified. Please check your inbox for a verification link.",
         )
-    # --- FIN DE LA NOUVELLE VÉRIFICATION ---
     
+    # --- NOUVELLE LOGIQUE MFA ---
+    if user.mfa_enabled:
+        # Le MFA est activé. On ne renvoie pas de token d'accès.
+        # On renvoie un token temporaire pour l'étape 2.
+        mfa_token = create_mfa_token(user.email)
+        return TokenResponse(mfa_required=True, mfa_token=mfa_token)
+    else:
+        # Le MFA est désactivé. Connexion normale.
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user.email, "scope": "access"}, # Ajout du scope "access"
+            expires_delta=access_token_expires
+        )
+        return TokenResponse(access_token=access_token, token_type="bearer", mfa_required=False)
+    # --- FIN NOUVELLE LOGIQUE MFA ---
+
+# --- NOUVELLE ROUTE : LOGIN ÉTAPE 2 (MFA) ---
+@app.post("/api/auth/mfa-login", response_model=Token) # Renvoie le token d'accès final
+async def mfa_login(mfa_data: MfaLoginRequest):
+    """
+    Étape 2 de la connexion : vérification du code MFA.
+    Prend le mfa_token temporaire et le code MFA.
+    Renvoie le token d'accès final.
+    """
+    try:
+        email = await get_email_from_mfa_token(mfa_data.mfa_token)
+    except HTTPException as e:
+        raise e # Renvoie l'erreur 401 si le mfa_token est invalide/expiré
+        
+    user = await get_user(email)
+    if not user or not user.mfa_enabled or not user.mfa_secret:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled for this user.")
+        
+    # Vérifie le code MFA
+    if not verify_mfa_code(user.mfa_secret, mfa_data.mfa_code):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code.")
+        
+    # Le code est valide ! On génère le token d'accès final.
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
+        data={"sub": user.email, "scope": "access"}, 
+        expires_delta=access_token_expires
     )
-    
-    return {"access_token": access_token, "token_type": "bearer"}
+    return Token(access_token=access_token, token_type="bearer")
 
-# --- NOUVELLE ROUTE DE VÉRIFICATION ---
+
 @app.get("/api/auth/verify-email")
 async def verify_email_route(token: str):
     """Valide le token reçu par e-mail et active le compte"""
@@ -471,7 +612,6 @@ async def verify_email_route(token: str):
         return {"message": "Email verified successfully. You can now log in."}
     else:
         raise HTTPException(status_code=500, detail="Failed to update user verification status")
-# --- FIN DE LA NOUVELLE ROUTE ---
 
 
 @app.get("/api/users/me", response_model=UserPublic)
@@ -511,6 +651,87 @@ async def change_password(
     )
     
     return {"message": "Password updated successfully"}
+
+
+# --- NOUVELLES ROUTES POUR LA GESTION DU MFA ---
+
+@app.get("/api/mfa/setup", response_model=MfaSetupResponse)
+async def mfa_setup_generate(current_user: UserInDB = Depends(get_current_user)):
+    """Génère un nouveau secret MFA et le QR code correspondant"""
+    
+    if current_user.mfa_enabled:
+        raise HTTPException(status_code=400, detail="MFA is already enabled.")
+        
+    # Génère un nouveau secret
+    secret_key = pyotp.random_base32()
+    
+    # Génère le QR code
+    qr_code_uri = generate_qr_code_data_uri(current_user.email, secret_key)
+    
+    # Sauvegarde le secret (temporairement ou définitivement, 
+    # mais il doit être là pour la vérification)
+    # Pour simplifier, on le sauvegarde directement.
+    await users_collection.update_one(
+        {"id": current_user.id},
+        {"$set": {"mfa_secret": secret_key, "mfa_enabled": False}} # Pas encore activé
+    )
+    
+    return MfaSetupResponse(secret_key=secret_key, qr_code_data_uri=qr_code_uri)
+
+
+@app.post("/api/mfa/verify")
+async def mfa_setup_verify(
+    mfa_data: MfaVerifyRequest, 
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """Vérifie le code TOTP pour finaliser l'activation du MFA"""
+    
+    if current_user.mfa_enabled:
+        raise HTTPException(status_code=400, detail="MFA is already enabled.")
+        
+    if not current_user.mfa_secret:
+        raise HTTPException(status_code=400, detail="MFA setup has not been initiated.")
+        
+    # Vérifie le code
+    if not verify_mfa_code(current_user.mfa_secret, mfa_data.mfa_code):
+        raise HTTPException(status_code=400, detail="Invalid MFA code.")
+        
+    # Le code est bon ! On active le MFA pour de bon.
+    await users_collection.update_one(
+        {"id": current_user.id},
+        {"$set": {"mfa_enabled": True}}
+    )
+    
+    return {"message": "MFA enabled successfully."}
+
+
+@app.post("/api/mfa/disable")
+async def mfa_disable(
+    mfa_data: MfaDisableRequest, 
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """Désactive le MFA pour l'utilisateur"""
+    
+    if not current_user.mfa_enabled:
+        raise HTTPException(status_code=400, detail="MFA is not enabled.")
+        
+    # 1. Vérifier le mot de passe
+    if not verify_password(mfa_data.password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+        
+    # 2. Vérifier le code MFA
+    if not verify_mfa_code(current_user.mfa_secret, mfa_data.mfa_code):
+        raise HTTPException(status_code=401, detail="Invalid MFA code.")
+        
+    # Tout est bon, on désactive
+    await users_collection.update_one(
+        {"id": current_user.id},
+        {"$set": {"mfa_enabled": False, "mfa_secret": None}}
+    )
+    
+    return {"message": "MFA disabled successfully."}
+
+# --- FIN DES NOUVELLES ROUTES MFA ---
 
 
 # --- Routes Métier (Sécurisées) ---
@@ -983,12 +1204,12 @@ async def get_dashboard_stats(
             month_end = datetime(target_year, month_num + 1, 1, tzinfo=timezone.utc)
         
         month_transactions = await transactions_collection.find({
-            "date": {"$gte": month_start, "$lt": month_end},
+            "date": {"$gte": month_start, "$lt": end_date},
             "user_id": current_user.id # Sécurisé
         }).to_list(None)
         
         month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Revenu")
-        month_depenses = sum(t["amount"] for t in month_transactions if t["type"] == "Dépense")
+        month_depenses = sum(t["amount"]d for t in month_transactions if t["type"] == "Dépense")
         
         monthly_data.append({
             "month": month_names[i],
@@ -1005,9 +1226,6 @@ async def get_dashboard_stats(
         "display_period": display_period,
         "global_epargne_totale": global_epargne_totale
     }
-# ---
-# --- FIN DE LA MODIFICATION (Dashboard) ---
-# ---
 
 
 # Lancement du serveur (Identique)
