@@ -1204,12 +1204,15 @@ async def get_dashboard_stats(
             month_end = datetime(target_year, month_num + 1, 1, tzinfo=timezone.utc)
         
         month_transactions = await transactions_collection.find({
-            "date": {"$gte": month_start, "$lt": end_date},
+            "date": {"$gte": month_start, "$lt": month_end},
             "user_id": current_user.id # Sécurisé
         }).to_list(None)
         
         month_revenus = sum(t["amount"] for t in month_transactions if t["type"] == "Revenu")
-        month_depenses = sum(t["amount"]d for t in month_transactions if t["type"] == "Dépense")
+        
+        # --- CORRECTION DE LA FAUTE DE FRAPPE ---
+        month_depenses = sum(t["amount"] for t in month_transactions if t["type"] == "Dépense")
+        # --- FIN CORRECTION ---
         
         monthly_data.append({
             "month": month_names[i],
