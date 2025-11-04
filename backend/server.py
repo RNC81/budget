@@ -46,7 +46,7 @@ app = FastAPI()
 
 # Configuration CORS (Identique)
 origins = [
-    "https://budget-1-fbg6.onrender.com",
+    "https.budget-1-fbg6.onrender.com",
     "http://localhost:3000"
 ]
 
@@ -79,14 +79,20 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
 
-class UserPublic(UserBase):
+# ---
+# --- DÉBUT DE LA MODIFICATION ---
+# ---
+class UserPublic(BaseModel):
     id: str
+    email: EmailStr
+    mfa_enabled: bool = False # Ajout du champ MFA ici
+# ---
+# --- FIN DE LA MODIFICATION ---
+# ---
 
 class UserInDB(UserPublic):
     hashed_password: str
     is_verified: Optional[bool] = None
-    # --- NOUVEAUX CHAMPS MFA ---
-    mfa_enabled: bool = False
     mfa_secret: Optional[str] = None
 
 # Modèle de réponse pour la connexion (devient plus complexe)
@@ -613,12 +619,21 @@ async def verify_email_route(token: str):
     else:
         raise HTTPException(status_code=500, detail="Failed to update user verification status")
 
-
+# ---
+# --- DÉBUT DE LA MODIFICATION ---
+# ---
 @app.get("/api/users/me", response_model=UserPublic)
 async def read_users_me(current_user: UserInDB = Depends(get_current_user)):
     """Retourne les informations de l'utilisateur connecté"""
-    return UserPublic(id=current_user.id, email=current_user.email)
-
+    # On renvoie maintenant le statut MFA
+    return UserPublic(
+        id=current_user.id, 
+        email=current_user.email, 
+        mfa_enabled=current_user.mfa_enabled
+    )
+# ---
+# --- FIN DE LA MODIFICATION ---
+# ---
 
 @app.put("/api/users/me/change-password")
 async def change_password(
