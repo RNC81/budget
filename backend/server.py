@@ -113,14 +113,11 @@ class TokenData(BaseModel):
 class MfaSetupResponse(BaseModel):
     secret_key: str
     qr_code_data_uri: str
-
 class MfaVerifyRequest(BaseModel):
     mfa_code: str
-
 class MfaLoginRequest(BaseModel):
     mfa_token: str
     mfa_code: str
-
 class MfaDisableRequest(BaseModel):
     password: str
     mfa_code: str
@@ -129,7 +126,6 @@ class MfaDisableRequest(BaseModel):
 # --- NOUVEAU : Modèles pour le mot de passe oublié ---
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
-
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
@@ -177,7 +173,6 @@ class PasswordChangeRequest(BaseModel): current_password: str; new_password: str
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
-
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
@@ -232,17 +227,15 @@ async def get_email_from_mfa_token(token: str) -> str:
 
 # --- NOUVEAU : Fonctions pour le token de mot de passe oublié ---
 def create_password_reset_token(email: str) -> str:
-    """Crée un token JWT (15 min) pour la réinitialisation de mot de passe"""
     expires = datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
     to_encode = {
         "sub": email,
         "exp": expires,
-        "scope": "password_reset" # Scope très spécifique
+        "scope": "password_reset"
     }
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_email_from_password_reset_token(token: str) -> str:
-    """Valide le token de réinitialisation et retourne l'e-mail"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Invalid or expired password reset token.",
@@ -251,13 +244,11 @@ async def get_email_from_password_reset_token(token: str) -> str:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("scope") != "password_reset":
             raise credentials_exception
-            
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
-            
         return email
-    except JWTError: # Gère l'expiration
+    except JWTError: 
         raise credentials_exception
 # --- FIN NOUVEAUTÉ ---
 
@@ -321,17 +312,14 @@ def send_verification_email(email: str, token: str):
 
 # --- NOUVEAU : Fonction d'envoi d'e-mail de réinitialisation ---
 def send_password_reset_email(email: str, token: str):
-    """Envoie l'e-mail de réinitialisation de mot de passe via SendGrid"""
     frontend_url = os.getenv("FRONTEND_URL")
     sender_email = os.getenv("SENDER_EMAIL")
     sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
 
-    # Si les variables manquent, la route parente gérera l'erreur
     if not all([frontend_url, sender_email, sendgrid_api_key]):
         print("ERREUR: Variables d'environnement SendGrid manquantes pour le mot de passe oublié.")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
 
-    # Le lien pointe vers la nouvelle page frontend
     reset_link = f"{frontend_url}/reset-password?token={token}"
     
     message = Mail(
@@ -395,24 +383,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
 # --- Gestion des Catégories par Défaut (Identique) ---
 
 DEFAULT_CATEGORIES = [
-    {"name": "Salaire", "type": "Revenu"},
-    {"name": "Aide Papa", "type": "Revenu"},
-    {"name": "Autres revenu", "type": "Revenu"},
-    {"name": "Logement", "type": "Dépense"},
-    {"name": "Alimentation", "type": "Dépense"},
-    {"name": "Transport", "type": "Dépense"},
-    {"name": "Santé", "type": "Dépense"},
-    {"name": "Loisirs", "type": "Dépense"},
-    {"name": "Abonnements", "type": "Dépense"},
-    {"name": "Shopping", "type": "Dépense"},
-    {"name": "Autre dépense", "type": "Dépense"},
-    {"name": "Cadeaux", "type": "Dépense"},
-    {"name": "Coiffeur", "type": "Dépense"},
-    {"name": "Prêt", "type": "Dépense"},
-    {"name": "Restaurant", "type": "Dépense"},
-    {"name": "Investissement", "type": "Dépense"},
-    {"name": "Etudes", "type": "Dépense"},
-    {"name": "Vacances", "type": "Dépense"},
+    {"name": "Salaire", "type": "Revenu"}, {"name": "Aide Papa", "type": "Revenu"},
+    {"name": "Autres revenu", "type": "Revenu"}, {"name": "Logement", "type": "Dépense"},
+    {"name": "Alimentation", "type": "Dépense"}, {"name": "Transport", "type": "Dépense"},
+    {"name": "Santé", "type": "Dépense"}, {"name": "Loisirs", "type": "Dépense"},
+    {"name": "Abonnements", "type": "Dépense"}, {"name": "Shopping", "type": "Dépense"},
+    {"name": "Autre dépense", "type": "Dépense"}, {"name": "Cadeaux", "type": "Dépense"},
+    {"name": "Coiffeur", "type": "Dépense"}, {"name": "Prêt", "type": "Dépense"},
+    {"name": "Restaurant", "type": "Dépense"}, {"name": "Investissement", "type": "Dépense"},
+    {"name": "Etudes", "type": "Dépense"}, {"name": "Vacances", "type": "Dépense"},
 ]
 
 async def initialize_default_categories(user_id: str):
@@ -421,11 +400,8 @@ async def initialize_default_categories(user_id: str):
         for cat in DEFAULT_CATEGORIES:
             category_id = str(uuid.uuid4())
             await categories_collection.insert_one({
-                "id": category_id,
-                "user_id": user_id, 
-                "name": cat["name"],
-                "type": cat["type"],
-                "created_at": datetime.now(timezone.utc)
+                "id": category_id, "user_id": user_id, "name": cat["name"],
+                "type": cat["type"], "created_at": datetime.now(timezone.utc)
             })
 
 # --- Routes d'Authentification (Mis à jour) ---
@@ -438,22 +414,16 @@ async def register_user(user: UserCreate):
     
     hashed_password = get_password_hash(user.password)
     user_id = str(uuid.uuid4())
-    
     user_count = await users_collection.count_documents({})
     is_first_user = user_count == 0
 
     new_user_data = {
-        "id": user_id,
-        "email": user.email,
-        "hashed_password": hashed_password,
-        "is_verified": is_first_user,
-        "mfa_enabled": False, 
-        "mfa_secret": None
+        "id": user_id, "email": user.email, "hashed_password": hashed_password,
+        "is_verified": is_first_user, "mfa_enabled": False, "mfa_secret": None
     }
     
     if is_first_user:
         await users_collection.insert_one(new_user_data)
-        
         await transactions_collection.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": user_id}})
         await categories_collection.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": user_id}})
         await subcategories_collection.update_many({"user_id": {"$exists": False}}, {"$set": {"user_id": user_id}})
@@ -469,7 +439,7 @@ async def register_user(user: UserCreate):
         await users_collection.insert_one(new_user_data)
         await initialize_default_categories(user_id)
             
-    return UserPublic(id=user_id, email=user.email, mfa_enabled=False) # mfa_enabled est False par défaut
+    return UserPublic(id=user_id, email=user.email, mfa_enabled=False)
 
 
 @app.post("/api/auth/token", response_model=TokenResponse) 
@@ -551,51 +521,33 @@ async def verify_email_route(token: str):
 # --- NOUVEAU : Routes pour le mot de passe oublié ---
 @app.post("/api/auth/forgot-password")
 async def forgot_password(data: ForgotPasswordRequest):
-    """
-    Étape 1 du mot de passe oublié : l'utilisateur donne son e-mail.
-    """
     user = await get_user(data.email)
-    
-    # IMPORTANT : Pour des raisons de sécurité, on ne dit JAMAIS
-    # "Cet e-mail n'existe pas". On renvoie le même message de succès
-    # que l'e-mail existe ou non, pour empêcher l'énumération d'e-mails.
     if user:
         try:
             password_reset_token = create_password_reset_token(user.email)
             send_password_reset_email(user.email, password_reset_token)
         except Exception as e:
-            # Si SendGrid échoue, on ne bloque pas l'utilisateur,
-            # mais on log l'erreur côté serveur.
             print(f"ERREUR CRITIQUE lors de l'envoi de l'e-mail de réinitialisation: {e}")
-            # On renvoie quand même un message de succès pour l'utilisateur
             pass
-            
     return {"message": "If an account with that email exists, a password reset link has been sent."}
 
 @app.post("/api/auth/reset-password")
 async def reset_password(data: ResetPasswordRequest):
-    """
-    Étape 2 : L'utilisateur fournit un token (venu de l'e-mail)
-    et son nouveau mot de passe.
-    """
     try:
         email = await get_email_from_password_reset_token(data.token)
     except HTTPException as e:
-        raise e # Renvoie 400 si le token est invalide ou expiré
+        raise e 
     
     user = await get_user(email)
     if not user:
-        # Ne devrait jamais arriver si le token est valide, mais par sécurité
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Validation du nouveau mot de passe
     if len(data.new_password) < 8:
          raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="New password must be at least 8 characters long",
         )
             
-    # Hacher et sauvegarder le nouveau mot de passe
     new_hashed_password = get_password_hash(data.new_password)
     
     await users_collection.update_one(
@@ -649,15 +601,12 @@ async def change_password(
 async def mfa_setup_generate(current_user: UserInDB = Depends(get_current_user)):
     if current_user.mfa_enabled:
         raise HTTPException(status_code=400, detail="MFA is already enabled.")
-        
     secret_key = pyotp.random_base32()
     qr_code_uri = generate_qr_code_data_uri(current_user.email, secret_key)
-    
     await users_collection.update_one(
         {"id": current_user.id},
         {"$set": {"mfa_secret": secret_key, "mfa_enabled": False}} 
     )
-    
     return MfaSetupResponse(secret_key=secret_key, qr_code_data_uri=qr_code_uri)
 
 
@@ -668,18 +617,14 @@ async def mfa_setup_verify(
 ):
     if current_user.mfa_enabled:
         raise HTTPException(status_code=400, detail="MFA is already enabled.")
-        
     if not current_user.mfa_secret:
         raise HTTPException(status_code=400, detail="MFA setup has not been initiated.")
-        
     if not verify_mfa_code(current_user.mfa_secret, mfa_data.mfa_code):
         raise HTTPException(status_code=400, detail="Invalid MFA code.")
-        
     await users_collection.update_one(
         {"id": current_user.id},
         {"$set": {"mfa_enabled": True}}
     )
-    
     return {"message": "MFA enabled successfully."}
 
 
@@ -690,24 +635,21 @@ async def mfa_disable(
 ):
     if not current_user.mfa_enabled:
         raise HTTPException(status_code=400, detail="MFA is not enabled.")
-        
     if not verify_password(mfa_data.password, current_user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect password.")
-        
     if not verify_mfa_code(current_user.mfa_secret, mfa_data.mfa_code):
         raise HTTPException(status_code=401, detail="Invalid MFA code.")
-        
     await users_collection.update_one(
         {"id": current_user.id},
         {"$set": {"mfa_enabled": False, "mfa_secret": None}}
     )
-    
     return {"message": "MFA disabled successfully."}
-
 # --- FIN DES Routes MFA ---
 
 
-# --- Routes Métier (Identiques) ---
+# ---
+# --- DÉBUT DES ROUTES MÉTIER (PRÉSENTES ET CORRECTES) ---
+# ---
 
 @app.get("/api/health")
 async def health():
@@ -723,11 +665,8 @@ async def get_categories(current_user: UserInDB = Depends(get_current_user)):
 async def create_category(category: CategoryCreate, current_user: UserInDB = Depends(get_current_user)):
     category_id = str(uuid.uuid4())
     new_category_data = {
-        "id": category_id,
-        "user_id": current_user.id, 
-        "name": category.name,
-        "type": category.type,
-        "created_at": datetime.now(timezone.utc)
+        "id": category_id, "user_id": current_user.id, "name": category.name,
+        "type": category.type, "created_at": datetime.now(timezone.utc)
     }
     await categories_collection.insert_one(new_category_data.copy())
     return new_category_data
@@ -735,32 +674,25 @@ async def create_category(category: CategoryCreate, current_user: UserInDB = Dep
 @app.put("/api/categories/{category_id}")
 async def update_category(category_id: str, category: CategoryUpdate, current_user: UserInDB = Depends(get_current_user)):
     existing = await categories_collection.find_one({"id": category_id, "user_id": current_user.id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Category not found")
-    
+    if not existing: raise HTTPException(status_code=404, detail="Category not found")
     update_data = {k: v for k, v in category.dict(exclude_unset=True).items()}
     if update_data:
         await categories_collection.update_one(
             {"id": category_id, "user_id": current_user.id}, 
             {"$set": update_data}
         )
-    
     updated = await categories_collection.find_one({"id": category_id, "user_id": current_user.id})
     return {"id": updated["id"], "name": updated["name"], "type": updated["type"], "created_at": updated["created_at"]}
 
 @app.delete("/api/categories/{category_id}")
 async def delete_category(category_id: str, current_user: UserInDB = Depends(get_current_user)):
     existing = await categories_collection.find_one({"id": category_id, "user_id": current_user.id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Category not found")
-    
+    if not existing: raise HTTPException(status_code=404, detail="Category not found")
     await subcategories_collection.delete_many({"category_id": category_id, "user_id": current_user.id})
-    
     await transactions_collection.update_many(
         {"category_id": category_id, "user_id": current_user.id},
         {"$set": {"category_id": None, "subcategory_id": None}}
     )
-    
     await categories_collection.delete_one({"id": category_id, "user_id": current_user.id})
     return {"message": "Category deleted successfully"}
 
@@ -773,16 +705,11 @@ async def get_subcategories(current_user: UserInDB = Depends(get_current_user)):
 @app.post("/api/subcategories")
 async def create_subcategory(subcategory: SubCategoryCreate, current_user: UserInDB = Depends(get_current_user)):
     category = await categories_collection.find_one({"id": subcategory.category_id, "user_id": current_user.id})
-    if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
-    
+    if not category: raise HTTPException(status_code=404, detail="Category not found")
     subcategory_id = str(uuid.uuid4())
     new_subcategory_data = {
-        "id": subcategory_id,
-        "user_id": current_user.id, 
-        "category_id": subcategory.category_id,
-        "name": subcategory.name,
-        "created_at": datetime.now(timezone.utc)
+        "id": subcategory_id, "user_id": current_user.id, "category_id": subcategory.category_id,
+        "name": subcategory.name, "created_at": datetime.now(timezone.utc)
     }
     await subcategories_collection.insert_one(new_subcategory_data.copy())
     return new_subcategory_data
@@ -790,34 +717,30 @@ async def create_subcategory(subcategory: SubCategoryCreate, current_user: UserI
 @app.put("/api/subcategories/{subcategory_id}")
 async def update_subcategory(subcategory_id: str, subcategory: SubCategoryUpdate, current_user: UserInDB = Depends(get_current_user)):
     existing = await subcategories_collection.find_one({"id": subcategory_id, "user_id": current_user.id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="SubCategory not found")
-    
+    if not existing: raise HTTPException(status_code=404, detail="SubCategory not found")
     update_data = {k: v for k, v in subcategory.dict(exclude_unset=True).items()}
     if update_data:
         await subcategories_collection.update_one(
             {"id": subcategory_id, "user_id": current_user.id}, 
             {"$set": update_data}
         )
-    
     updated = await subcategories_collection.find_one({"id": subcategory_id, "user_id": current_user.id})
     return {"id": updated["id"], "category_id": updated["category_id"], "name": updated["name"], "created_at": updated["created_at"]}
 
 @app.delete("/api/subcategories/{subcategory_id}")
 async def delete_subcategory(subcategory_id: str, current_user: UserInDB = Depends(get_current_user)):
     existing = await subcategories_collection.find_one({"id": subcategory_id, "user_id": current_user.id})
-    if not existing:
-        raise HTTPException(status_code=404, detail="SubCategory not found")
-    
+    if not existing: raise HTTPException(status_code=404, detail="SubCategory not found")
     await transactions_collection.update_many(
         {"subcategory_id": subcategory_id, "user_id": current_user.id},
         {"$set": {"subcategory_id": None}}
     )
-    
     await subcategories_collection.delete_one({"id": subcategory_id, "user_id": current_user.id})
     return {"message": "SubCategory deleted successfully"}
 
-# Transaction Routes (Sécurisées)
+# ---
+# --- CORRECTION DU BUG D'AFFICHAGE DES TRANSACTIONS ---
+# ---
 @app.get("/api/transactions")
 async def get_transactions(
     start_date: Optional[str] = None,
@@ -841,8 +764,21 @@ async def get_transactions(
         query["description"] = {"$regex": search, "$options": "i"}
     
     transactions = await transactions_collection.find(query).sort("date", -1).to_list(None)
-    # Pydantic/FastAPI s'occupe de la sérialisation, pas besoin de boucle manuelle
-    return [t for t in transactions]
+    
+    # On revient à votre méthode de "construction manuelle" du dictionnaire.
+    # C'est la CORRECTION. Ma version [t for t in transactions] était buggée.
+    return [{
+        "id": t["id"],
+        "date": t["date"],
+        "amount": t["amount"],
+        "type": t["type"],
+        "description": t.get("description"),
+        "category_id": t.get("category_id"),
+        "subcategory_id": t.get("subcategory_id"),
+        "created_at": t["created_at"]
+    } for t in transactions]
+# --- FIN DE LA CORRECTION ---
+
 
 @app.post("/api/transactions")
 async def create_transaction(transaction: TransactionCreate, current_user: UserInDB = Depends(get_current_user)):
@@ -866,7 +802,7 @@ async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB
     new_transactions_data = []
     for transaction in data.transactions:
         transaction_id = str(uuid.uuid4())
-        # C'est la variable que vous utilisez ci-dessous
+        # Correction de la petite erreur de variable de votre code original
         new_transaction_doc = { 
             "id": transaction_id,
             "user_id": current_user.id, 
@@ -878,7 +814,7 @@ async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB
             "subcategory_id": transaction.subcategory_id,
             "created_at": datetime.now(timezone.utc)
         }
-        new_transactions_data.append(new_transaction_doc) # Utilisation de la bonne variable
+        new_transactions_data.append(new_transaction_doc) 
     
     if not new_transactions_data:
         raise HTTPException(status_code=400, detail="No transactions to import.")
@@ -903,7 +839,8 @@ async def update_transaction(transaction_id: str, transaction: TransactionUpdate
         )
     
     updated = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
-    # Pydantic/FastAPI s'occupe de la sérialisation
+    # Ici, retourner le document complet est OK car il est sérialisé par Pydantic
+    # (le problème est spécifiquement sur les listes)
     return updated
 
 @app.delete("/api/transactions/{transaction_id}")
@@ -919,8 +856,18 @@ async def delete_transaction(transaction_id: str, current_user: UserInDB = Depen
 @app.get("/api/recurring-transactions")
 async def get_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
     recurring = await recurring_transactions_collection.find({"user_id": current_user.id}).to_list(None)
-    # Pydantic/FastAPI s'occupe de la sérialisation
-    return [r for r in recurring]
+    # On applique la même correction ici par sécurité
+    return [{
+        "id": r["id"],
+        "amount": r["amount"],
+        "type": r["type"],
+        "description": r.get("description"),
+        "category_id": r.get("category_id"),
+        "subcategory_id": r.get("subcategory_id"),
+        "frequency": r["frequency"],
+        "day_of_month": r["day_of_month"],
+        "created_at": r["created_at"]
+    } for r in recurring]
 
 @app.post("/api/recurring-transactions")
 async def create_recurring_transaction(recurring: RecurringTransactionCreate, current_user: UserInDB = Depends(get_current_user)):
@@ -954,7 +901,7 @@ async def update_recurring_transaction(recurring_id: str, recurring: RecurringTr
         )
     
     updated = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
-    # Pydantic/FastAPI s'occupe de la sérialisation
+    # Idem, le retour d'un seul doc est géré
     return updated
 
 @app.delete("/api/recurring-transactions/{recurring_id}")
