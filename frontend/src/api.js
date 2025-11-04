@@ -80,6 +80,18 @@ export const getCurrentUser = async () => {
   return await api.get('/api/users/me');
 };
 
+// --- AJOUT DEVISE : Nouvelle fonction ---
+/**
+ * Met à jour la devise de l'utilisateur.
+ * @param {string} currency - Le code de la devise (ex: "USD", "EUR").
+ */
+export const updateUserCurrency = async (currency) => {
+  return await api.put('/api/users/me/currency', {
+    currency: currency,
+  });
+};
+// --- FIN AJOUT DEVISE ---
+
 
 // --- Fonctions de Gestion MFA ---
 

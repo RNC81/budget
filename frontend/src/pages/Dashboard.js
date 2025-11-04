@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 // 1. Import de 'Link' pour le lien vers les paramètres
 import { Link } from 'react-router-dom';
 import api from '../api';
+// --- AJOUT DEVISE : Import de useAuth ---
+import { useAuth } from '../App'; 
+// --- FIN AJOUT DEVISE ---
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
@@ -41,13 +44,15 @@ const getInitialEndDate = () => {
   return new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
 };
 
-// 2. Ajout d'une fonction helper pour le formatage
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(amount);
-};
+// 2. --- AJOUT DEVISE : La fonction formatCurrency est SUPPRIMÉE d'ici ---
+//    Elle est maintenant définie à l'intérieur du composant Dashboard.
 
 
 function Dashboard() {
+  // --- AJOUT DEVISE : Récupération de l'utilisateur depuis le contexte ---
+  const { user } = useAuth();
+  // --- FIN AJOUT DEVISE ---
+
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -60,6 +65,24 @@ function Dashboard() {
 
   const [formStartDate, setFormStartDate] = useState(appliedParams.start);
   const [formEndDate, setFormEndDate] = useState(appliedParams.end);
+  
+  // --- AJOUT DEVISE : Nouvelle fonction de formatage dynamique ---
+  /**
+   * Formate un montant dans la devise de l'utilisateur (définie dans les paramètres).
+   * @param {number} amount - Le montant à formater.
+   * @returns {string} - Le montant formaté (ex: "1 234,56 €" ou "$1,234.56").
+   */
+  const formatCurrency = (amount) => {
+    const currencyCode = user?.currency || 'EUR'; // EUR par défaut
+    
+    // On utilise 'fr-FR' comme locale pour le formatage des nombres (espace, virgule)
+    // mais on force la devise choisie par l'utilisateur.
+    return new Intl.NumberFormat('fr-FR', { 
+      style: 'currency', 
+      currency: currencyCode 
+    }).format(amount);
+  };
+  // --- FIN AJOUT DEVISE ---
   
   useEffect(() => {
     fetchStats();
@@ -197,7 +220,7 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Stats Cards (Identique) */}
+      {/* --- Stats Cards (MISE À JOUR AVEC formatCurrency) --- */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* Revenus */}
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow">
@@ -273,7 +296,7 @@ function Dashboard() {
 
 
       {/* ---
-        4. NOUVEAU BLOC : SUIVI DES BUDGETS
+        4. BLOC BUDGETS (MISE À JOUR AVEC formatCurrency)
         ---
       */}
       <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
@@ -283,10 +306,10 @@ function Dashboard() {
           <div className="space-y-6">
             {budgets.map((budget) => {
               // Calcul des pourcentages
-              const spent = budget.spent;
-              const amount = budget.amount;
+              const spent = budget.amount_spent; // Nom de champ corrigé
+              const amount = budget.amount_budgeted; // Nom de champ corrigé
               // % brut (peut dépasser 100%)
-              const rawPercentage = (spent / amount) * 100;
+              const rawPercentage = (amount > 0) ? (spent / amount) * 100 : 0;
               // % plafonné à 100% pour la barre visuelle
               const clampedPercentage = Math.min(rawPercentage, 100);
 
@@ -338,10 +361,10 @@ function Dashboard() {
           </div>
         )}
       </div>
-      {/* --- FIN DU NOUVEAU BLOC BUDGETS --- */}
+      {/* --- FIN DU BLOC BUDGETS --- */}
 
 
-      {/* Conteneur pour les graphiques (Identique) */}
+      {/* --- Conteneur pour les graphiques (MISE À JOUR AVEC formatCurrency) --- */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
         {/* Graphique Barres */}
@@ -418,3 +441,4 @@ function Dashboard() {
 }
 
 export default Dashboard;
+

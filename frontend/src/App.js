@@ -21,7 +21,10 @@ import {
   mfaLogin as apiMfaLogin,
   register as apiRegister, 
   logout as apiLogout, 
-  getCurrentUser 
+  getCurrentUser,
+  // --- AJOUT DEVISE ---
+  updateUserCurrency as apiUpdateCurrency 
+  // --- FIN AJOUT DEVISE ---
 } from './api';
 
 // --- Création du Contexte d'Authentification ---
@@ -45,6 +48,7 @@ const AuthProvider = ({ children }) => {
       if (token) {
         try {
           const response = await getCurrentUser(); 
+          // 'response.data' contient maintenant { id, email, mfa_enabled, currency }
           setUser(response.data); 
           setIsAuthenticated(true);
         } catch (error) {
@@ -94,6 +98,7 @@ const AuthProvider = ({ children }) => {
     try {
       localStorage.setItem('authToken', accessToken);
       const response = await getCurrentUser();
+      // 'response.data' contient maintenant la devise
       setUser(response.data);
       setIsAuthenticated(true);
     } catch (error) {
@@ -121,6 +126,28 @@ const AuthProvider = ({ children }) => {
     setIsAuthenticated(false);
   };
 
+  // --- AJOUT DEVISE : Nouvelle fonction pour mettre à jour la devise ---
+  /**
+   * Met à jour la devise dans le backend et dans l'état local.
+   * @param {string} currency - Le nouveau code de devise (ex: "USD")
+   */
+  const updateCurrency = async (currency) => {
+    try {
+      // 1. Appelle l'API pour sauvegarder le changement
+      const response = await apiUpdateCurrency(currency);
+      
+      // 2. Met à jour l'état local 'user' avec les nouvelles données
+      //    'response.data' devrait renvoyer l'utilisateur mis à jour
+      setUser(response.data);
+      
+    } catch (error) {
+      console.error("Failed to update currency", error);
+      // Gérer l'erreur (par exemple, afficher une notification à l'utilisateur)
+      throw error;
+    }
+  };
+  // --- FIN AJOUT DEVISE ---
+
   // Valeur fournie par le contexte
   const value = {
     user,
@@ -131,6 +158,9 @@ const AuthProvider = ({ children }) => {
     completeLogin, // Étape finale
     register,
     logout,
+    // --- AJOUT DEVISE ---
+    updateCurrency, // On expose la nouvelle fonction
+    // --- FIN AJOUT DEVISE ---
   };
 
   return (
@@ -147,7 +177,8 @@ function ProtectedRoute({ children }) {
   const location = useLocation();
 
   if (isLoading) {
-    return <div>Chargement de l'application...</div>; 
+    // Vous pouvez remplacer ceci par un joli spinner de chargement
+    return <div className="flex justify-center items-center min-h-screen">Chargement...</div>; 
   }
 
   if (!isAuthenticated) {
@@ -162,7 +193,8 @@ function PublicRoute({ children }) {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    return <div>Chargement de l'application...</div>;
+    // Vous pouvez remplacer ceci par un joli spinner de chargement
+    return <div className="flex justify-center items-center min-h-screen">Chargement...</div>;
   }
 
   if (isAuthenticated) {
