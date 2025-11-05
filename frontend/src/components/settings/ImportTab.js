@@ -3,21 +3,20 @@ import api from '../../api';
 import { Upload, Loader, AlertCircle, CheckCircle } from 'lucide-react';
 import Papa from 'papaparse';
 
-// --- MODIFICATION ---
-// Ajout de "aout" (sans accent) pour une robustesse maximale.
+// Fait correspondre les mois du CSV aux numéros (base 0 pour JS Date)
+// Gère "Août" (2024) et "Aoūt" (2025) et "Aout" (sans accent)
 const monthMap = {
   'janvier': 0, 'février': 1, 'mars': 2, 'avril': 3, 'mai': 4, 'juin': 5,
-  'juillet': 6, 'août': 7, 'aoūt': 7, 'aout': 7, 'septembre': 8, 
-  'octobre': 9, 'novembre': 10, 'décembre': 11
+  'juillet': 6, 'août': 7, 'aoūt': 7, 'aout': 7, 'septembre': 8, 'octobre': 9, 'novembre': 10, 'décembre': 11
 };
-// --- FIN MODIFICATION ---
 
 // Fonction pour nettoyer les noms (utilisée pour les mois et les catégories)
 const normalizeString = (str) => (str || '').trim().toLowerCase();
 
 function ImportTab() {
   const [file, setFile] = useState(null);
-  const [year, setYear] = useState(new Date().getFullYear());
+  // On initialise en string pour être sûr, mais la nouvelle validation gère les deux
+  const [year, setYear] = useState(new Date().getFullYear().toString()); 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -51,10 +50,16 @@ function ImportTab() {
       setError('Veuillez sélectionner un fichier CSV.');
       return;
     }
-    if (!year || year.length !== 4) {
-      setError('Veuillez entrer une année valide (ex: 2024).');
+
+    // --- CORRECTION DU BUG DE VALIDATION ---
+    // On utilise une regex pour vérifier que 'year' est bien composé de 4 chiffres.
+    // Cela fonctionne que 'year' soit un nombre (2025) ou une chaîne ("2025").
+    if (!/^\d{4}$/.test(year)) {
+      setError('Veuillez entrer une année valide à 4 chiffres (ex: 2025).');
       return;
     }
+    // --- FIN DE LA CORRECTION ---
+
     if (categories.length === 0) {
       setError('Les catégories ne sont pas encore chargées. Réessayez dans un instant.');
       return;
@@ -85,6 +90,10 @@ function ImportTab() {
 
           setSuccess(response.data.message || 'Importation réussie !');
           setFile(null);
+          // Réinitialise le champ 'file' dans le DOM pour pouvoir re-télécharger le même fichier
+          if(document.querySelector('input[type="file"]')) {
+            document.querySelector('input[type="file"]').value = '';
+          }
         } catch (err) {
           setError(err.message || 'Une erreur est survenue lors du traitement ou de l\'envoi.');
         } finally {
@@ -121,10 +130,10 @@ function ImportTab() {
             Année des données (YYYY)
           </label>
           <input
-            type="number"
+            type="number" // On garde "number" pour le clavier mobile, la validation gère le reste
             value={year}
             onChange={handleYearChange}
-            placeholder="Ex: 2024"
+            placeholder="Ex: 2025"
             className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
           />
         </div>
@@ -270,10 +279,6 @@ function processCSV(data, appCategories, year) {
       
       // On met le 15 du mois par défaut pour éviter les pbs de fuseaux horaires
       const transactionDate = new Date(year, monthIndex, 15);
-      
-      // 7. --- PAS DE VALIDATION DE DATE FUTURE ICI ---
-      // On ne vérifie PAS si transactionDate > new Date()
-      // On accepte toutes les dates du fichier.
       
       transactions.push({
         date: transactionDate.toISOString(),
