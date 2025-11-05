@@ -535,7 +535,10 @@ function Dashboard() {
                     ))}
                   </Pie>
                   <Tooltip
-                    formatter={(value) => [formatCurrency(value), 'Total']}
+                    // --- CORRECTION TOOLTIP ---
+                    // "value" est le montant, "name" est le nom de la catégorie
+                    formatter={(value, name) => [formatCurrency(value), name]}
+                    // --- FIN CORRECTION ---
                   />
                   <Legend />
                 </PieChart>
