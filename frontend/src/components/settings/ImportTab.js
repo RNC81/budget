@@ -3,12 +3,14 @@ import api from '../../api';
 import { Upload, Loader, AlertCircle, CheckCircle } from 'lucide-react';
 import Papa from 'papaparse';
 
-// Fait correspondre les mois du CSV aux numéros (base 0 pour JS Date)
-// Gère "Août" (2024) et "Aoūt" (2025)
+// --- MODIFICATION ---
+// Ajout de "aout" (sans accent) pour une robustesse maximale.
 const monthMap = {
   'janvier': 0, 'février': 1, 'mars': 2, 'avril': 3, 'mai': 4, 'juin': 5,
-  'juillet': 6, 'août': 7, 'aoūt': 7, 'septembre': 8, 'octobre': 9, 'novembre': 10, 'décembre': 11
+  'juillet': 6, 'août': 7, 'aoūt': 7, 'aout': 7, 'septembre': 8, 
+  'octobre': 9, 'novembre': 10, 'décembre': 11
 };
+// --- FIN MODIFICATION ---
 
 // Fonction pour nettoyer les noms (utilisée pour les mois et les catégories)
 const normalizeString = (str) => (str || '').trim().toLowerCase();
@@ -63,17 +65,15 @@ function ImportTab() {
     setSuccess('');
 
     Papa.parse(file, {
-      // --- LES CORRECTIONS SONT ICI ---
       delimiter: ";", // Force le point-virgule
       encoding: "ISO-8859-1", // Force la lecture des accents type "Excel Français"
       skipEmptyLines: true,
-      // ---
       complete: async (results) => {
         try {
           const transactionsToUpload = processCSV(results.data, categories, parseInt(year));
           
           if (transactionsToUpload.length === 0) {
-            setError('Aucune transaction valide trouvée dans le fichier. Vérifiez le format.');
+            setError('Aucune transaction valide trouvée dans le fichier. Vérifiez le format ou les noms de catégories.');
             setLoading(false);
             return;
           }
@@ -129,8 +129,6 @@ function ImportTab() {
           />
         </div>
 
-        {/* J'ai supprimé le choix du délimiteur, ce n'est plus la peine */}
-
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Fichier CSV (format "Mon Budget XXXX")
@@ -140,11 +138,11 @@ function ImportTab() {
             accept=".csv"
             onChange={handleFileChange}
             className="w-full text-sm text-gray-500
-                       file:mr-4 file:py-2 file:px-4
-                       file:rounded-lg file:border-0
-                       file:text-sm file:font-semibold
-                       file:bg-primary-50 file:text-primary-700
-                       hover:file:bg-primary-100"
+                      file:mr-4 file:py-2 file:px-4
+                      file:rounded-lg file:border-0
+                      file:text-sm file:font-semibold
+                      file:bg-primary-50 file:text-primary-700
+                      hover:file:bg-primary-100"
           />
         </div>
 
@@ -272,6 +270,10 @@ function processCSV(data, appCategories, year) {
       
       // On met le 15 du mois par défaut pour éviter les pbs de fuseaux horaires
       const transactionDate = new Date(year, monthIndex, 15);
+      
+      // 7. --- PAS DE VALIDATION DE DATE FUTURE ICI ---
+      // On ne vérifie PAS si transactionDate > new Date()
+      // On accepte toutes les dates du fichier.
       
       transactions.push({
         date: transactionDate.toISOString(),
