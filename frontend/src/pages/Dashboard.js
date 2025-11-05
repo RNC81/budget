@@ -9,7 +9,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-import { TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar, Filter } from 'lucide-react';
+// --- AJOUT PRÉVISIONS : Import de nouvelles icônes ---
+import { 
+  TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar, Filter,
+  CalendarClock, Repeat 
+} from 'lucide-react';
+// --- FIN AJOUT PRÉVISIONS ---
 import TransactionModal from '../components/TransactionModal';
 
 import DatePicker, { registerLocale } from 'react-datepicker';
@@ -44,9 +49,6 @@ const getInitialEndDate = () => {
   return new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
 };
 
-// 2. --- AJOUT DEVISE : La fonction formatCurrency est SUPPRIMÉE d'ici ---
-//    Elle est maintenant définie à l'intérieur du composant Dashboard.
-
 
 function Dashboard() {
   // --- AJOUT DEVISE : Récupération de l'utilisateur depuis le contexte ---
@@ -73,14 +75,14 @@ function Dashboard() {
    * @returns {string} - Le montant formaté (ex: "1 234,56 €" ou "$1,234.56").
    */
   const formatCurrency = (amount) => {
+    // Si amount n'est pas un nombre (ex: null ou undefined), on met 0
+    const safeAmount = typeof amount === 'number' ? amount : 0;
     const currencyCode = user?.currency || 'EUR'; // EUR par défaut
     
-    // On utilise 'fr-FR' comme locale pour le formatage des nombres (espace, virgule)
-    // mais on force la devise choisie par l'utilisateur.
     return new Intl.NumberFormat('fr-FR', { 
       style: 'currency', 
       currency: currencyCode 
-    }).format(amount);
+    }).format(safeAmount);
   };
   // --- FIN AJOUT DEVISE ---
   
@@ -140,8 +142,13 @@ function Dashboard() {
   const displayPeriod = stats?.display_period || 'Période sélectionnée';
   const displayYear = appliedParams.start ? appliedParams.start.getFullYear() : new Date().getFullYear();
 
-  // 3. Récupération des données de budget
   const budgets = stats?.budget_progress;
+
+  // --- AJOUT PRÉVISIONS : Récupération des données ---
+  const forecast = stats?.estimated_end_of_month_balance;
+  const upcomingList = stats?.upcoming_transactions_list;
+  const currentGlobalBalance = stats?.global_epargne_totale;
+  // --- FIN AJOUT PRÉVISIONS ---
 
   return (
     <div className="space-y-8">
@@ -228,7 +235,7 @@ function Dashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600 mb-1">Total Revenus</p>
               <p className="text-3xl font-bold text-gray-900">
-                {formatCurrency(stats?.revenus_total || 0)}
+                {formatCurrency(stats?.revenus_total)}
               </p>
             </div>
             <div className="bg-success-100 rounded-full p-3">
@@ -243,7 +250,7 @@ function Dashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600 mb-1">Total Dépenses</p>
               <p className="text-3xl font-bold text-gray-900">
-                {formatCurrency(stats?.depenses_total || 0)}
+                {formatCurrency(stats?.depenses_total)}
               </p>
             </div>
             <div className="bg-red-100 rounded-full p-3">
@@ -260,7 +267,7 @@ function Dashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600 mb-1">Épargne (Période)</p>
               <p className={`text-3xl font-bold ${epargnePositive ? 'text-success-600' : 'text-red-600'}`}>
-                {formatCurrency(stats?.epargne_total || 0)}
+                {formatCurrency(stats?.epargne_total)}
               </p>
             </div>
             <div className={`${epargnePositive ? 'bg-success-100' : 'bg-red-100'} rounded-full p-3`}>
@@ -280,7 +287,7 @@ function Dashboard() {
             <div>
               <p className="text-sm font-medium text-gray-600 mb-1">Épargne Globale</p>
               <p className={`text-3xl font-bold ${globalEpargnePositive ? 'text-primary-600' : 'text-red-600'}`}>
-                {formatCurrency(stats?.global_epargne_totale || 0)}
+                {formatCurrency(stats?.global_epargne_totale)}
               </p>
             </div>
             <div className={`${globalEpargnePositive ? 'bg-primary-100' : 'bg-red-100'} rounded-full p-3`}>
@@ -296,9 +303,81 @@ function Dashboard() {
 
 
       {/* ---
-        4. BLOC BUDGETS (MISE À JOUR AVEC formatCurrency)
-        ---
-      */}
+        NOUVEAU BLOC : PRÉVISIONS DE FLUX DE TRÉSORERIE
+      --- */}
+      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-900 mb-6">Prévisions pour la fin du mois</h2>
+        
+        {/* Grille pour les totaux et la liste */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          
+          {/* Partie 1: Totaux */}
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Solde global actuel</p>
+              <p className="text-2xl font-bold text-gray-800">
+                {formatCurrency(currentGlobalBalance)}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-600">Changements récurrents à venir</p>
+              <p className={`text-2xl font-bold ${stats?.total_upcoming_change >= 0 ? 'text-success-600' : 'text-red-600'}`}>
+                {stats?.total_upcoming_change >= 0 ? '+' : ''}
+                {formatCurrency(stats?.total_upcoming_change)}
+              </p>
+            </div>
+            <hr className="border-gray-200" />
+            <div>
+              <p className="text-sm font-medium text-primary-700">Solde estimé fin de mois</p>
+              <p className={`text-3xl font-extrabold ${forecast >= 0 ? 'text-primary-600' : 'text-red-600'}`}>
+                {formatCurrency(forecast)}
+              </p>
+            </div>
+          </div>
+
+          {/* Partie 2: Liste des transactions à venir */}
+          <div>
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Transactions à venir ce mois-ci</h3>
+            {upcomingList && upcomingList.length > 0 ? (
+              <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
+                {upcomingList.map((trans, index) => (
+                  <div key={index} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
+                    <div>
+                      <p className="font-medium text-gray-900">{trans.description}</p>
+                      <p className="text-sm text-gray-500">
+                        Prévu le {trans.day_of_month} du mois
+                      </p>
+                    </div>
+                    <span className={`font-semibold ${trans.type === 'Revenu' ? 'text-success-600' : 'text-red-600'}`}>
+                      {trans.type === 'Revenu' ? '+' : '-'}
+                      {formatCurrency(trans.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              // Cas où il n'y a pas de transactions à venir
+              <div className="text-center text-gray-500 py-6 border-2 border-dashed border-gray-200 rounded-lg">
+                <Repeat className="h-10 w-10 mx-auto text-gray-400 mb-2" />
+                <p className="font-medium">Aucune transaction récurrente à venir.</p>
+                <p className="text-sm mt-1">
+                  Les prévisions sont basées sur vos{' '}
+                  <Link to="/settings" onClick={() => localStorage.setItem('lastSettingsTab', 'recurring')} className="font-semibold text-primary-600 hover:underline">
+                    transactions récurrentes
+                  </Link>.
+                </p>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+      {/* --- FIN DU BLOC PRÉVISIONS --- */}
+
+
+      {/* ---
+        BLOC BUDGETS (Identique)
+      --- */}
       <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Suivi des Budgets ({displayPeriod})</h2>
         
@@ -306,11 +385,9 @@ function Dashboard() {
           <div className="space-y-6">
             {budgets.map((budget) => {
               // Calcul des pourcentages
-              const spent = budget.amount_spent; // Nom de champ corrigé
-              const amount = budget.amount_budgeted; // Nom de champ corrigé
-              // % brut (peut dépasser 100%)
+              const spent = budget.amount_spent;
+              const amount = budget.amount_budgeted;
               const rawPercentage = (amount > 0) ? (spent / amount) * 100 : 0;
-              // % plafonné à 100% pour la barre visuelle
               const clampedPercentage = Math.min(rawPercentage, 100);
 
               // Choix de la couleur
@@ -354,7 +431,7 @@ function Dashboard() {
             <p className="font-medium">Aucun budget défini pour cette période.</p>
             <p className="text-sm mt-1">
               Vous pouvez ajouter des budgets mensuels dans les{' '}
-              <Link to="/settings" className="font-semibold text-primary-600 hover:underline">
+              <Link to="/settings" onClick={() => localStorage.setItem('lastSettingsTab', 'budgets')} className="font-semibold text-primary-600 hover:underline">
                 Paramètres
               </Link>.
             </p>
@@ -364,7 +441,7 @@ function Dashboard() {
       {/* --- FIN DU BLOC BUDGETS --- */}
 
 
-      {/* --- Conteneur pour les graphiques (MISE À JOUR AVEC formatCurrency) --- */}
+      {/* --- Conteneur pour les graphiques (Identique) --- */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
         {/* Graphique Barres */}
@@ -441,4 +518,3 @@ function Dashboard() {
 }
 
 export default Dashboard;
-

@@ -383,8 +383,8 @@ def send_verification_email(email: str, token: str):
         sg = SendGridAPIClient(sendgrid_api_key)
         response = sg.send(message) 
         if response.status_code >= 300: 
-             print(f"Erreur SendGrid: {response.body}")
-             raise Exception(f"SendGrid error: {response.body}")
+            print(f"Erreur SendGrid: {response.body}")
+            raise Exception(f"SendGrid error: {response.body}")
     except Exception as e:
         print(f"Erreur critique lors de l'envoi de l'e-mail: {e}")
         raise HTTPException(status_code=500, detail="Failed to send verification email.")
@@ -411,7 +411,7 @@ def send_password_reset_email(email: str, token: str):
                 <p>Vous avez demandé à réinitialiser votre mot de passe pour Budget Tracker. Cliquez sur le bouton ci-dessous pour continuer :</p>
                 <p style="text-align: center; margin: 25px 0;">
                     <a href="{reset_link}" style="background-color: #dc3545; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
-                       Réinitialiser mon mot de passe
+                        Réinitialiser mon mot de passe
                     </a>
                 </p>
                 <p>Ce lien est valide pendant {PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} minutes.</p>
@@ -423,8 +423,8 @@ def send_password_reset_email(email: str, token: str):
         sg = SendGridAPIClient(sendgrid_api_key)
         response = sg.send(message)
         if response.status_code >= 300:
-             print(f"Erreur SendGrid: {response.body}")
-             raise Exception(f"SendGrid error: {response.body}")
+            print(f"Erreur SendGrid: {response.body}")
+            raise Exception(f"SendGrid error: {response.body}")
     except Exception as e:
         print(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
         raise HTTPException(status_code=500, detail="Failed to send password reset email.")
@@ -652,8 +652,6 @@ async def reset_password(data: ResetPasswordRequest):
 @app.get("/api/users/me", response_model=UserPublic)
 async def read_users_me(current_user: UserInDB = Depends(get_current_user)):
     """Retourne les informations de l'utilisateur connecté (y compris la devise)"""
-    # current_user est de type UserInDB, qui est un sous-modèle de UserPublic.
-    # FastAPI s'occupe de ne retourner que les champs de UserPublic.
     return current_user
 # --- FIN AJOUT DEVISE ---
 
@@ -692,7 +690,6 @@ async def update_user_currency(
 ):
     """Met à jour la devise préférée de l'utilisateur."""
     
-    # On pourrait valider le code devise ici, mais pour l'instant on fait confiance
     new_currency = currency_data.currency.upper()
     
     await users_collection.update_one(
@@ -883,14 +880,9 @@ async def get_transactions(
     transactions = await transactions_collection.find(query).sort("date", -1).to_list(None)
     
     return [{
-        "id": t["id"],
-        "date": t["date"],
-        "amount": t["amount"],
-        "type": t["type"],
-        "description": t.get("description"),
-        "category_id": t.get("category_id"),
-        "subcategory_id": t.get("subcategory_id"),
-        "created_at": t["created_at"]
+        "id": t["id"], "date": t["date"], "amount": t["amount"], "type": t["type"],
+        "description": t.get("description"), "category_id": t.get("category_id"),
+        "subcategory_id": t.get("subcategory_id"), "created_at": t["created_at"]
     } for t in transactions]
 
 @app.post("/api/transactions")
@@ -1196,7 +1188,7 @@ async def get_dashboard_stats(
             "month": month_names[i], "revenus": month_revenus, "depenses": month_depenses
         })
     
-    # --- 6. NOUVEAU : Calcul de la progression des budgets ---
+    # --- 6. Calcul de la progression des budgets ---
     budget_progress = []
     
     user_budgets = await budgets_collection.find({"user_id": current_user.id}).to_list(None)
@@ -1234,7 +1226,7 @@ async def get_dashboard_stats(
         "expense_breakdown": expense_breakdown,
         "display_period": display_period,
         "global_epargne_totale": global_epargne_totale,
-        "budget_progress": budget_progress # <--- NOUVELLE DONNÉE AJOUTÉE
+        "budget_progress": budget_progress 
     }
 
 
@@ -1242,4 +1234,3 @@ async def get_dashboard_stats(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
-
