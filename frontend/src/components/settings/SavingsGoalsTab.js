@@ -1,4 +1,4 @@
-import React, { useState, useEffect }'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../App'; // Importé pour le formatage de la devise
 import { 
   getSavingsGoals, 
