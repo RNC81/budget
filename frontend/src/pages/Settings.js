@@ -5,7 +5,9 @@ import CategoriesTab from '../components/settings/CategoriesTab';
 import SubCategoriesTab from '../components/settings/SubCategoriesTab';
 import RecurringTransactionsTab from '../components/settings/RecurringTransactionsTab';
 import ImportTab from '../components/settings/ImportTab';
-import PasswordTab from '../components/settings/PasswordTab'; 
+// --- MODIFICATION : Renommage pour SecurityTab ---
+import SecurityTab from '../components/settings/SecurityTab'; // <-- Changé de PasswordTab
+// --- FIN MODIFICATION ---
 // 2. Import du nouveau composant (que nous créerons à l'étape suivante)
 import BudgetsTab from '../components/settings/BudgetsTab';
 
@@ -68,7 +70,9 @@ function Settings() {
           {activeTab === 'budgets' && <BudgetsTab />}
           {activeTab === 'recurring' && <RecurringTransactionsTab />}
           {activeTab === 'import' && <ImportTab />}
-          {activeTab === 'security' && <PasswordTab />} 
+          {/* --- MODIFICATION : Renommage pour SecurityTab --- */}
+          {activeTab === 'security' && <SecurityTab />}  {/* <-- Changé de PasswordTab */}
+          {/* --- FIN MODIFICATION --- */}
         </div>
       </div>
     </div>

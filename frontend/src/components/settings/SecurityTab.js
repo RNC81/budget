@@ -6,7 +6,7 @@ import { useAuth } from '../../App';
 import { Lock, AlertCircle, CheckCircle, Smartphone, Shield, Loader, Landmark, Save } from 'lucide-react';
 
 // --- AJOUT DEVISE ---
-// Liste des devises supportées
+// Liste des devises supportées (MISE À JOUR)
 const CURRENCIES = [
   { code: 'EUR', name: 'Euro (€)' },
   { code: 'USD', name: 'Dollar Américain ($)' },
@@ -14,6 +14,10 @@ const CURRENCIES = [
   { code: 'GBP', name: 'Livre Sterling (£)' },
   { code: 'CHF', name: 'Franc Suisse (CHF)' },
   { code: 'JPY', name: 'Yen Japonais (¥)' },
+  { code: 'IRR', name: 'Rial Iranien (IRR)' },
+  { code: 'IQD', name: 'Dinar Irakien (IQD)' },
+  { code: 'MUR', name: 'Roupie Mauricienne (MUR)' },
+  { code: 'MGA', name: 'Ariary Malgache (MGA)' },
 ];
 // --- FIN AJOUT DEVISE ---
 
@@ -458,4 +462,3 @@ function SecurityTab() { // Renommé de PasswordTab à SecurityTab
 
 // 6. Exporter le nouveau nom
 export default SecurityTab;
-
