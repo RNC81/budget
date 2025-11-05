@@ -126,7 +126,7 @@ export const resetPassword = async (token, newPassword) => {
 };
 // --- FIN NOUVEAUTÉ ---
 
-// --- NOUVEAU : Fonctions de Gestion des Budgets ---
+// --- Fonctions de Gestion des Budgets ---
 
 /**
  * Récupère tous les budgets de l'utilisateur.
@@ -167,6 +167,57 @@ export const deleteBudget = async (budgetId) => {
 };
 // --- FIN NOUVEAUTÉ ---
 
+// --- NOUVEAU : Fonctions de Gestion des Objectifs d'Épargne ---
+
+/**
+ * Récupère tous les objectifs d'épargne.
+ */
+export const getSavingsGoals = async () => {
+  return await api.get('/api/savings-goals');
+};
+
+/**
+ * Crée un nouvel objectif d'épargne.
+ * @param {string} name - Nom de l'objectif.
+ * @param {number} targetAmount - Montant cible.
+ */
+export const createSavingsGoal = async (name, targetAmount) => {
+  return await api.post('/api/savings-goals', {
+    name: name,
+    target_amount: targetAmount,
+  });
+};
+
+/**
+ * Met à jour un objectif (nom ou montant cible).
+ * @param {string} goalId - ID de l'objectif.
+ * @param {object} data - { name?: string, target_amount?: number }
+ */
+export const updateSavingsGoal = async (goalId, data) => {
+  return await api.put(`/api/savings-goals/${goalId}`, data);
+};
+
+/**
+ * Ajoute ou retire de l'argent d'un objectif.
+ * @param {string} goalId - ID de l'objectif.
+ * @param {number} amount - Montant à ajouter/retirer (positif).
+ * @param {string} action - "add" ou "remove".
+ */
+export const adjustSavingsGoal = async (goalId, amount, action) => {
+  return await api.post(`/api/savings-goals/${goalId}/adjust`, {
+    amount: amount,
+    action: action,
+  });
+};
+
+/**
+ * Supprime un objectif d'épargne.
+ * @param {string} goalId - ID de l'objectif.
+ */
+export const deleteSavingsGoal = async (goalId) => {
+  return await api.delete(`/api/savings-goals/${goalId}`);
+};
+// --- FIN NOUVEAUTÉ ---
+
 
 export default api;
-

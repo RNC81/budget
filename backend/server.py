@@ -75,7 +75,10 @@ categories_collection = db.categories
 subcategories_collection = db.subcategories
 recurring_transactions_collection = db.recurring_transactions
 budgets_collection = db.budgets # NOUVELLE COLLECTION
-# --- FIN NOUVEAUTÉ ---
+
+# --- AJOUT OBJECTIFS D'ÉPARGNE ---
+savings_goals_collection = db.savings_goals
+# --- FIN AJOUT OBJECTIFS D'ÉPARGNE ---
 
 
 # --- Modèles Pydantic (Mis à jour) ---
@@ -190,6 +193,28 @@ class BudgetCreate(BaseModel):
 
 class BudgetUpdate(BaseModel):
     amount: float = Field(..., gt=0)
+# --- FIN NOUVEAUTÉ ---
+
+# --- NOUVEAU : Modèles pour les Objectifs d'Épargne ---
+class SavingsGoal(BaseModel):
+    id: str
+    user_id: str
+    name: str
+    target_amount: float = Field(..., gt=0)
+    current_amount: float = Field(default=0, ge=0)
+    created_at: datetime
+
+class SavingsGoalCreate(BaseModel):
+    name: str
+    target_amount: float = Field(..., gt=0)
+
+class SavingsGoalUpdate(BaseModel):
+    name: Optional[str] = None
+    target_amount: Optional[float] = Field(None, gt=0)
+
+class SavingsGoalAdjust(BaseModel):
+    amount: float = Field(..., gt=0) # L'UI gérera si c'est "ajouter" ou "retirer"
+    action: str # "add" or "remove"
 # --- FIN NOUVEAUTÉ ---
 
 
@@ -1216,8 +1241,48 @@ async def get_dashboard_stats(
             "remaining": amount_budgeted - amount_spent
         })
     # --- FIN NOUVEAUTÉ ---
+
+    # --- 7. NOUVEAU : Calcul des prévisions de fin de mois ---
+    current_day = now.day
     
-    # --- 7. Retourner la réponse complète (avec la nouvelle clé) ---
+    # Initialiser les valeurs de prévision
+    total_upcoming_change = 0.0
+    upcoming_transactions_list = []
+    
+    # Récupérer toutes les transactions récurrentes mensuelles
+    all_recurring = await recurring_transactions_collection.find({
+        "user_id": current_user.id,
+        "frequency": "Mensuel"
+    }).to_list(None)
+
+    # Gère le cas où il n'y a pas de transactions récurrentes (votre remarque)
+    if all_recurring:
+        for trans in all_recurring:
+            # On ne compte que les transactions qui n'ont pas encore eu lieu ce mois-ci
+            if trans["day_of_month"] > current_day: # Changé de >= à >
+                amount = trans["amount"]
+                if trans["type"] == "Dépense":
+                    total_upcoming_change -= amount
+                elif trans["type"] == "Revenu":
+                    total_upcoming_change += amount
+                
+                # Ajouter à la liste pour l'affichage sur le dashboard
+                upcoming_transactions_list.append({
+                    "description": trans.get("description", "Transaction récurrente"),
+                    "amount": amount,
+                    "type": trans["type"],
+                    "day_of_month": trans["day_of_month"]
+                })
+
+    # Trier la liste par date pour l'affichage
+    upcoming_transactions_list.sort(key=lambda x: x["day_of_month"])
+
+    # Le solde estimé est le solde global ACTUEL + tous les changements à venir
+    estimated_end_of_month_balance = global_epargne_totale + total_upcoming_change
+    # --- FIN NOUVEAU CALCUL ---
+    
+    
+    # --- 8. Retourner la réponse complète (avec la nouvelle clé) ---
     return {
         "revenus_total": revenus,
         "depenses_total": depenses,
@@ -1226,7 +1291,13 @@ async def get_dashboard_stats(
         "expense_breakdown": expense_breakdown,
         "display_period": display_period,
         "global_epargne_totale": global_epargne_totale,
-        "budget_progress": budget_progress 
+        "budget_progress": budget_progress,
+        
+        # --- AJOUT PRÉVISIONS ---
+        "upcoming_transactions_list": upcoming_transactions_list,
+        "total_upcoming_change": total_upcoming_change,
+        "estimated_end_of_month_balance": estimated_end_of_month_balance
+        # --- FIN AJOUT PRÉVISIONS ---
     }
 
 

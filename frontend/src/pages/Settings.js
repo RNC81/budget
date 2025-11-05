@@ -1,15 +1,14 @@
 import React, { useState } from 'react';
-// 1. Ajout de l'icône 'PiggyBank'
-import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload, Shield, PiggyBank } from 'lucide-react';
+// 1. Ajout de l'icône 'Target'
+import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload, Shield, PiggyBank, Target } from 'lucide-react';
 import CategoriesTab from '../components/settings/CategoriesTab';
 import SubCategoriesTab from '../components/settings/SubCategoriesTab';
 import RecurringTransactionsTab from '../components/settings/RecurringTransactionsTab';
 import ImportTab from '../components/settings/ImportTab';
-// --- MODIFICATION : Renommage pour SecurityTab ---
-import SecurityTab from '../components/settings/SecurityTab'; // <-- Changé de PasswordTab
-// --- FIN MODIFICATION ---
-// 2. Import du nouveau composant (que nous créerons à l'étape suivante)
+import SecurityTab from '../components/settings/SecurityTab'; 
 import BudgetsTab from '../components/settings/BudgetsTab';
+// 2. Import du nouveau composant
+import SavingsGoalsTab from '../components/settings/SavingsGoalsTab';
 
 function Settings() {
   const [activeTab, setActiveTab] = useState('categories');
@@ -17,8 +16,9 @@ function Settings() {
   const tabs = [
     { id: 'categories', name: 'Catégories', icon: Tag },
     { id: 'subcategories', name: 'Sous-Catégories', icon: FolderTree },
-    // 3. Ajout du nouvel onglet "Budgets"
     { id: 'budgets', name: 'Budgets', icon: PiggyBank },
+    // 3. Ajout du nouvel onglet "Objectifs"
+    { id: 'goals', name: 'Objectifs', icon: Target },
     { id: 'recurring', name: 'Transactions Récurrentes', icon: Repeat },
     { id: 'import', name: 'Importer', icon: Upload },
     { id: 'security', name: 'Sécurité', icon: Shield }, 
@@ -35,7 +35,7 @@ function Settings() {
           <h1 className="text-3xl font-bold text-gray-900">Paramètres</h1>
         </div>
         {/* 4. Mise à jour de la description */}
-        <p className="text-gray-600">Gérez vos catégories, budgets, importations et sécurité</p>
+        <p className="text-gray-600">Gérez vos catégories, budgets, objectifs, importations et sécurité</p>
       </div>
 
       {/* Tabs */}
@@ -66,13 +66,12 @@ function Settings() {
         <div className="p-6">
           {activeTab === 'categories' && <CategoriesTab />}
           {activeTab === 'subcategories' && <SubCategoriesTab />}
-          {/* 5. Rendu du nouveau composant */}
           {activeTab === 'budgets' && <BudgetsTab />}
+          {/* 5. Rendu du nouveau composant */}
+          {activeTab === 'goals' && <SavingsGoalsTab />}
           {activeTab === 'recurring' && <RecurringTransactionsTab />}
           {activeTab === 'import' && <ImportTab />}
-          {/* --- MODIFICATION : Renommage pour SecurityTab --- */}
-          {activeTab === 'security' && <SecurityTab />}  {/* <-- Changé de PasswordTab */}
-          {/* --- FIN MODIFICATION --- */}
+          {activeTab === 'security' && <SecurityTab />} 
         </div>
       </div>
     </div>

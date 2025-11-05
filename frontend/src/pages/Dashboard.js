@@ -9,12 +9,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-// --- AJOUT PRÉVISIONS : Import de nouvelles icônes ---
+// --- AJOUT OBJECTIFS : Import de l'icône Target ---
 import { 
   TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar, Filter,
-  CalendarClock, Repeat 
+  CalendarClock, Repeat, Target 
 } from 'lucide-react';
-// --- FIN AJOUT PRÉVISIONS ---
+// --- FIN AJOUT OBJECTIFS ---
 import TransactionModal from '../components/TransactionModal';
 
 import DatePicker, { registerLocale } from 'react-datepicker';
@@ -69,13 +69,7 @@ function Dashboard() {
   const [formEndDate, setFormEndDate] = useState(appliedParams.end);
   
   // --- AJOUT DEVISE : Nouvelle fonction de formatage dynamique ---
-  /**
-   * Formate un montant dans la devise de l'utilisateur (définie dans les paramètres).
-   * @param {number} amount - Le montant à formater.
-   * @returns {string} - Le montant formaté (ex: "1 234,56 €" ou "$1,234.56").
-   */
   const formatCurrency = (amount) => {
-    // Si amount n'est pas un nombre (ex: null ou undefined), on met 0
     const safeAmount = typeof amount === 'number' ? amount : 0;
     const currencyCode = user?.currency || 'EUR'; // EUR par défaut
     
@@ -149,6 +143,10 @@ function Dashboard() {
   const upcomingList = stats?.upcoming_transactions_list;
   const currentGlobalBalance = stats?.global_epargne_totale;
   // --- FIN AJOUT PRÉVISIONS ---
+
+  // --- AJOUT OBJECTIFS : Récupération des données ---
+  const savingsGoals = stats?.savings_goals_progress;
+  // --- FIN AJOUT OBJECTIFS ---
 
   return (
     <div className="space-y-8">
@@ -303,15 +301,13 @@ function Dashboard() {
 
 
       {/* ---
-        NOUVEAU BLOC : PRÉVISIONS DE FLUX DE TRÉSORERIE
+        BLOC PRÉVISIONS (Identique)
       --- */}
       <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Prévisions pour la fin du mois</h2>
         
-        {/* Grille pour les totaux et la liste */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           
-          {/* Partie 1: Totaux */}
           <div className="space-y-4">
             <div>
               <p className="text-sm font-medium text-gray-600">Solde global actuel</p>
@@ -335,7 +331,6 @@ function Dashboard() {
             </div>
           </div>
 
-          {/* Partie 2: Liste des transactions à venir */}
           <div>
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Transactions à venir ce mois-ci</h3>
             {upcomingList && upcomingList.length > 0 ? (
@@ -356,7 +351,6 @@ function Dashboard() {
                 ))}
               </div>
             ) : (
-              // Cas où il n'y a pas de transactions à venir
               <div className="text-center text-gray-500 py-6 border-2 border-dashed border-gray-200 rounded-lg">
                 <Repeat className="h-10 w-10 mx-auto text-gray-400 mb-2" />
                 <p className="font-medium">Aucune transaction récurrente à venir.</p>
@@ -384,13 +378,11 @@ function Dashboard() {
         {budgets && budgets.length > 0 ? (
           <div className="space-y-6">
             {budgets.map((budget) => {
-              // Calcul des pourcentages
               const spent = budget.amount_spent;
               const amount = budget.amount_budgeted;
               const rawPercentage = (amount > 0) ? (spent / amount) * 100 : 0;
               const clampedPercentage = Math.min(rawPercentage, 100);
 
-              // Choix de la couleur
               let barColor = 'bg-success-600'; // Vert
               if (rawPercentage > 95) {
                 barColor = 'bg-red-600'; // Rouge
@@ -400,21 +392,18 @@ function Dashboard() {
 
               return (
                 <div key={budget.id}>
-                  {/* Légende (Nom et montants) */}
                   <div className="flex justify-between items-baseline mb-1">
                     <span className="font-semibold text-gray-800">{budget.category_name}</span>
                     <span className="text-sm font-medium text-gray-600">
                       {formatCurrency(spent)} / {formatCurrency(amount)}
                     </span>
                   </div>
-                  {/* Barre de progression */}
                   <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
                     <div
                       className={`h-4 rounded-full ${barColor} transition-all duration-500`}
                       style={{ width: `${clampedPercentage}%` }}
                     ></div>
                   </div>
-                  {/* Indicateur de dépassement */}
                   {rawPercentage > 100 && (
                     <p className="text-right text-sm font-semibold text-red-600 mt-1">
                       Dépassement de {formatCurrency(spent - amount)}
@@ -425,7 +414,6 @@ function Dashboard() {
             })}
           </div>
         ) : (
-          // --- Placeholder s'il n'y a pas de budget ---
           <div className="text-center text-gray-500 py-6 border-2 border-dashed border-gray-200 rounded-lg">
             <PiggyBank className="h-12 w-12 mx-auto text-gray-400 mb-2" />
             <p className="font-medium">Aucun budget défini pour cette période.</p>
@@ -439,6 +427,62 @@ function Dashboard() {
         )}
       </div>
       {/* --- FIN DU BLOC BUDGETS --- */}
+
+
+      {/* ---
+        NOUVEAU BLOC : OBJECTIFS D'ÉPARGNE
+      --- */}
+      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-900 mb-6">Objectifs d'Épargne (Global)</h2>
+        
+        {savingsGoals && savingsGoals.length > 0 ? (
+          <div className="space-y-6">
+            {savingsGoals.map((goal) => {
+              // Calcul des pourcentages
+              const current = goal.current_amount;
+              const target = goal.target_amount;
+              const percentage = (target > 0) ? (current / target) * 100 : 0;
+              const clampedPercentage = Math.min(percentage, 100);
+
+              return (
+                <div key={goal.id}>
+                  {/* Légende (Nom et montants) */}
+                  <div className="flex justify-between items-baseline mb-1">
+                    <span className="font-semibold text-gray-800">{goal.name}</span>
+                    <span className="text-sm font-medium text-gray-600">
+                      {formatCurrency(current)} / {formatCurrency(target)}
+                    </span>
+                  </div>
+                  {/* Barre de progression */}
+                  <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+                    <div
+                      className="h-4 rounded-full bg-yellow-500 transition-all duration-500" // Couleur Or pour les objectifs
+                      style={{ width: `${clampedPercentage}%` }}
+                    ></div>
+                  </div>
+                  {/* Indicateur de pourcentage */}
+                  <p className="text-right text-sm font-semibold text-gray-500 mt-1">
+                    {percentage.toFixed(0)}% atteint
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          // --- Placeholder s'il n'y a pas d'objectifs ---
+          <div className="text-center text-gray-500 py-6 border-2 border-dashed border-gray-200 rounded-lg">
+            <Target className="h-12 w-12 mx-auto text-gray-400 mb-2" />
+            <p className="font-medium">Aucun objectif d'épargne défini.</p>
+            <p className="text-sm mt-1">
+              Vous pouvez ajouter des cagnottes dans les{' '}
+              <Link to="/settings" onClick={() => localStorage.setItem('lastSettingsTab', 'goals')} className="font-semibold text-primary-600 hover:underline">
+                Paramètres
+              </Link>.
+            </p>
+          </div>
+        )}
+      </div>
+      {/* --- FIN DU BLOC OBJECTIFS D'ÉPARGNE --- */}
 
 
       {/* --- Conteneur pour les graphiques (Identique) --- */}
