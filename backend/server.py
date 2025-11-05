@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field # <--- CORRECTION (ajout de Field)
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 import os
@@ -1123,6 +1123,101 @@ async def delete_budget(budget_id: str, current_user: UserInDB = Depends(get_cur
 
 # --- FIN Routes Budgets ---
 
+# --- NOUVEAU : Routes pour les Objectifs d'Épargne ---
+
+@app.get("/api/savings-goals")
+async def get_savings_goals(current_user: UserInDB = Depends(get_current_user)):
+    """Récupère tous les objectifs d'épargne de l'utilisateur."""
+    goals = await savings_goals_collection.find({"user_id": current_user.id}).to_list(None)
+    return [g for g in goals] # Pydantic/FastAPI gère la sérialisation
+
+@app.post("/api/savings-goals")
+async def create_savings_goal(goal: SavingsGoalCreate, current_user: UserInDB = Depends(get_current_user)):
+    """Crée un nouvel objectif d'épargne."""
+    
+    goal_id = str(uuid.uuid4())
+    new_goal_data = {
+        "id": goal_id,
+        "user_id": current_user.id,
+        "name": goal.name,
+        "target_amount": goal.target_amount,
+        "current_amount": 0.0, # Toujours 0 au début
+        "created_at": datetime.now(timezone.utc)
+    }
+    await savings_goals_collection.insert_one(new_goal_data.copy())
+    return new_goal_data
+
+@app.put("/api/savings-goals/{goal_id}")
+async def update_savings_goal(goal_id: str, goal: SavingsGoalUpdate, current_user: UserInDB = Depends(get_current_user)):
+    """Met à jour le nom ou le montant cible d'un objectif."""
+    
+    existing = await savings_goals_collection.find_one({
+        "id": goal_id, 
+        "user_id": current_user.id
+    })
+    if not existing:
+        raise HTTPException(status_code=404, detail="Savings goal not found")
+
+    update_data = {k: v for k, v in goal.dict(exclude_unset=True).items()}
+    
+    if update_data:
+        await savings_goals_collection.update_one(
+            {"id": goal_id, "user_id": current_user.id},
+            {"$set": update_data}
+        )
+    
+    updated = await savings_goals_collection.find_one({"id": goal_id, "user_id": current_user.id})
+    return updated
+
+@app.post("/api/savings-goals/{goal_id}/adjust")
+async def adjust_savings_goal(goal_id: str, adjust: SavingsGoalAdjust, current_user: UserInDB = Depends(get_current_user)):
+    """Ajoute ou retire un montant d'un objectif d'épargne."""
+    
+    existing = await savings_goals_collection.find_one({
+        "id": goal_id, 
+        "user_id": current_user.id
+    })
+    if not existing:
+        raise HTTPException(status_code=404, detail="Savings goal not found")
+
+    current_amount = existing.get("current_amount", 0.0)
+    
+    if adjust.action == "add":
+        current_amount += adjust.amount
+    elif adjust.action == "remove":
+        current_amount -= adjust.amount
+        if current_amount < 0:
+            # Ne pas laisser le solde devenir négatif
+            raise HTTPException(status_code=400, detail="Cannot remove more than the current amount.")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Must be 'add' or 'remove'.")
+
+    await savings_goals_collection.update_one(
+        {"id": goal_id, "user_id": current_user.id},
+        {"$set": {"current_amount": current_amount}}
+    )
+    
+    updated = await savings_goals_collection.find_one({"id": goal_id, "user_id": current_user.id})
+    return updated
+
+
+@app.delete("/api/savings-goals/{goal_id}")
+async def delete_savings_goal(goal_id: str, current_user: UserInDB = Depends(get_current_user)):
+    """Supprime un objectif d'épargne."""
+    
+    existing = await savings_goals_collection.find_one({
+        "id": goal_id, 
+        "user_id": current_user.id
+    })
+    if not existing:
+        raise HTTPException(status_code=404, detail="Savings goal not found")
+        
+    await savings_goals_collection.delete_one({"id": goal_id, "user_id": current_user.id})
+    
+    return {"message": "Savings goal deleted successfully"}
+
+# --- FIN Routes Objectifs d'Épargne ---
+
 
 # ---
 # --- MISE À JOUR MAJEURE : Dashboard Statistics ---
@@ -1213,7 +1308,7 @@ async def get_dashboard_stats(
             "month": month_names[i], "revenus": month_revenus, "depenses": month_depenses
         })
     
-    # --- 6. Calcul de la progression des budgets ---
+    # --- 6. Calcul de la progression des budgets (identique) ---
     budget_progress = []
     
     user_budgets = await budgets_collection.find({"user_id": current_user.id}).to_list(None)
@@ -1240,33 +1335,28 @@ async def get_dashboard_stats(
             "amount_spent": amount_spent,
             "remaining": amount_budgeted - amount_spent
         })
-    # --- FIN NOUVEAUTÉ ---
+    # --- FIN Calcul Budgets ---
 
-    # --- 7. NOUVEAU : Calcul des prévisions de fin de mois ---
+    # --- 7. Calcul des prévisions de fin de mois (identique) ---
     current_day = now.day
     
-    # Initialiser les valeurs de prévision
     total_upcoming_change = 0.0
     upcoming_transactions_list = []
     
-    # Récupérer toutes les transactions récurrentes mensuelles
     all_recurring = await recurring_transactions_collection.find({
         "user_id": current_user.id,
         "frequency": "Mensuel"
     }).to_list(None)
 
-    # Gère le cas où il n'y a pas de transactions récurrentes (votre remarque)
     if all_recurring:
         for trans in all_recurring:
-            # On ne compte que les transactions qui n'ont pas encore eu lieu ce mois-ci
-            if trans["day_of_month"] > current_day: # Changé de >= à >
+            if trans["day_of_month"] > current_day: 
                 amount = trans["amount"]
                 if trans["type"] == "Dépense":
                     total_upcoming_change -= amount
                 elif trans["type"] == "Revenu":
                     total_upcoming_change += amount
                 
-                # Ajouter à la liste pour l'affichage sur le dashboard
                 upcoming_transactions_list.append({
                     "description": trans.get("description", "Transaction récurrente"),
                     "amount": amount,
@@ -1274,15 +1364,19 @@ async def get_dashboard_stats(
                     "day_of_month": trans["day_of_month"]
                 })
 
-    # Trier la liste par date pour l'affichage
     upcoming_transactions_list.sort(key=lambda x: x["day_of_month"])
 
-    # Le solde estimé est le solde global ACTUEL + tous les changements à venir
     estimated_end_of_month_balance = global_epargne_totale + total_upcoming_change
-    # --- FIN NOUVEAU CALCUL ---
+    # --- FIN Calcul Prévisions ---
+    
+    # --- 8. NOUVEAU : Récupérer les objectifs d'épargne ---
+    savings_goals_progress = await savings_goals_collection.find(
+        {"user_id": current_user.id}
+    ).to_list(None)
+    # --- FIN NOUVEAUTÉ ---
     
     
-    # --- 8. Retourner la réponse complète (avec la nouvelle clé) ---
+    # --- 9. Retourner la réponse complète (avec TOUTES les clés) ---
     return {
         "revenus_total": revenus,
         "depenses_total": depenses,
@@ -1293,11 +1387,11 @@ async def get_dashboard_stats(
         "global_epargne_totale": global_epargne_totale,
         "budget_progress": budget_progress,
         
-        # --- AJOUT PRÉVISIONS ---
         "upcoming_transactions_list": upcoming_transactions_list,
         "total_upcoming_change": total_upcoming_change,
-        "estimated_end_of_month_balance": estimated_end_of_month_balance
-        # --- FIN AJOUT PRÉVISIONS ---
+        "estimated_end_of_month_balance": estimated_end_of_month_balance,
+        
+        "savings_goals_progress": savings_goals_progress # <--- NOUVELLE DONNÉE
     }
 
 
