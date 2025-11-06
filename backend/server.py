@@ -1370,9 +1370,22 @@ async def get_dashboard_stats(
     # --- FIN Calcul Prévisions ---
     
     # --- 8. NOUVEAU : Récupérer les objectifs d'épargne ---
-    savings_goals_progress = await savings_goals_collection.find(
+    savings_goals_raw = await savings_goals_collection.find(
         {"user_id": current_user.id}
     ).to_list(None)
+    
+    # --- CORRECTION BUG : Nettoyer les données pour le JSON ---
+    savings_goals_progress = []
+    for goal in savings_goals_raw:
+        savings_goals_progress.append({
+            "id": goal["id"],
+            "name": goal["name"],
+            "target_amount": goal["target_amount"],
+            "current_amount": goal["current_amount"]
+            # On exclut "created_at" et "_id" qui ne sont pas sérialisables
+        })
+    # --- FIN CORRECTION ---
+    
     # --- FIN NOUVEAUTÉ ---
     
     
