@@ -1128,8 +1128,22 @@ async def delete_budget(budget_id: str, current_user: UserInDB = Depends(get_cur
 @app.get("/api/savings-goals")
 async def get_savings_goals(current_user: UserInDB = Depends(get_current_user)):
     """Récupère tous les objectifs d'épargne de l'utilisateur."""
-    goals = await savings_goals_collection.find({"user_id": current_user.id}).to_list(None)
-    return [g for g in goals] # Pydantic/FastAPI gère la sérialisation
+    goals_raw = await savings_goals_collection.find({"user_id": current_user.id}).to_list(None)
+    
+    # --- CORRECTION BUG : Nettoyer les données pour le JSON (comme sur le dashboard) ---
+    goals = []
+    for g in goals_raw:
+        goals.append({
+            "id": g["id"],
+            "user_id": g["user_id"],
+            "name": g["name"],
+            "target_amount": g["target_amount"],
+            "current_amount": g["current_amount"],
+            "created_at": g["created_at"] # On peut le garder ici, car le modèle Pydantic SavingsGoal le gère
+        })
+    return goals
+    # --- FIN CORRECTION ---
+
 
 @app.post("/api/savings-goals")
 async def create_savings_goal(goal: SavingsGoalCreate, current_user: UserInDB = Depends(get_current_user)):
