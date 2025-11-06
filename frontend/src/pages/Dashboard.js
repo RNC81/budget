@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 // 1. Import de 'Link' pour le lien vers les paramètres
 import { Link } from 'react-router-dom';
-import api from '../api';
+// 2. Import de l'API (avec la nouvelle fonction getMonthlyReview)
+import api, { getMonthlyReview } from '../api';
 // --- AJOUT DEVISE : Import de useAuth ---
 import { useAuth } from '../App'; 
 // --- FIN AJOUT DEVISE ---
@@ -9,12 +10,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-// --- AJOUT OBJECTIFS : Import de l'icône Target ---
+// --- AJOUT IDÉE 4 : Ajout de Award et AlertTriangle ---
 import { 
   TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar, Filter,
-  CalendarClock, Repeat, Target 
+  CalendarClock, Repeat, Target, Award, AlertTriangle
 } from 'lucide-react';
-// --- FIN AJOUT OBJECTIFS ---
+// --- FIN AJOUT IDÉE 4 ---
 import TransactionModal from '../components/TransactionModal';
 
 import DatePicker, { registerLocale } from 'react-datepicker';
@@ -57,6 +58,12 @@ function Dashboard() {
 
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  
+  // --- AJOUT IDÉE 4 : State pour la revue mensuelle ---
+  const [monthlyReviewData, setMonthlyReviewData] = useState(null);
+  const [loadingReview, setLoadingReview] = useState(true);
+  // --- FIN AJOUT IDÉE 4 ---
+
   const [showModal, setShowModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -80,9 +87,30 @@ function Dashboard() {
   };
   // --- FIN AJOUT DEVISE ---
   
+  // useEffect pour les stats principales (basées sur le filtre)
   useEffect(() => {
     fetchStats();
   }, [refreshKey, appliedParams]); 
+
+  // --- AJOUT IDÉE 4 : useEffect pour la revue (exécuté une seule fois) ---
+  useEffect(() => {
+    const fetchMonthlyReview = async () => {
+      setLoadingReview(true);
+      try {
+        // Appelle sans params pour avoir le mois précédent par défaut
+        const response = await getMonthlyReview(); 
+        setMonthlyReviewData(response.data);
+      } catch (error) {
+        console.error('Error fetching monthly review:', error);
+      } finally {
+        setLoadingReview(false);
+      }
+    };
+
+    fetchMonthlyReview();
+  }, []); // [] = Exécuter une seule fois au montage
+  // --- FIN AJOUT IDÉE 4 ---
+
 
   const fetchStats = async () => {
     setLoading(true);
@@ -298,6 +326,113 @@ function Dashboard() {
         </div>
       </div>
       {/* --- FIN DES STATS CARDS --- */}
+
+
+      {/* ---
+          NOUVEAU BLOC : REVUE MENSUELLE (IDÉE 4)
+      --- */}
+      <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
+        <h2 className="text-xl font-bold text-gray-900 mb-6">
+          Revue du Mois Précédent
+          {monthlyReviewData && (
+            <span className="text-lg font-normal text-primary-700 ml-2">
+              ({monthlyReviewData.display_period})
+            </span>
+          )}
+        </h2>
+        
+        {loadingReview ? (
+          <div className="flex items-center justify-center h-48">
+            <Loader className="h-8 w-8 animate-spin text-primary-600" />
+            <p className="ml-3 text-gray-600">Chargement de la revue...</p>
+          </div>
+        ) : !monthlyReviewData ? (
+          <div className="text-center text-gray-500 py-6 border-2 border-dashed border-gray-200 rounded-lg">
+            <p>Données de la revue mensuelle non disponibles.</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            
+            {/* Stats Clés de la Revue */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Total Épargné */}
+              <div className="bg-gray-50 p-4 rounded-lg text-center">
+                <p className="text-sm font-medium text-gray-600">Épargné ce mois-là</p>
+                <p className={`text-2xl font-bold ${monthlyReviewData.total_saved >= 0 ? 'text-success-600' : 'text-red-600'}`}>
+                  {formatCurrency(monthlyReviewData.total_saved)}
+                </p>
+              </div>
+              {/* Taux d'épargne */}
+              <div className="bg-gray-50 p-4 rounded-lg text-center">
+                <p className="text-sm font-medium text-gray-600">Taux d'épargne</p>
+                <p className={`text-2xl font-bold ${monthlyReviewData.savings_rate >= 10 ? 'text-success-600' : (monthlyReviewData.savings_rate > 0 ? 'text-yellow-600' : 'text-red-600')}`}>
+                  {monthlyReviewData.savings_rate.toFixed(1)}%
+                </p>
+              </div>
+              {/* Plus Grosse Dépense */}
+              <div className="bg-gray-50 p-4 rounded-lg text-center">
+                <p className="text-sm font-medium text-gray-600">Plus grosse dépense</p>
+                <p className="text-2xl font-bold text-red-600">
+                  {formatCurrency(monthlyReviewData.biggest_expense?.amount || 0)}
+                </p>
+                <p className="text-xs text-gray-500 truncate mt-1" title={monthlyReviewData.biggest_expense?.description}>
+                  {monthlyReviewData.biggest_expense?.description || 'N/A'}
+                </p>
+              </div>
+            </div>
+
+            {/* Analyse des Budgets */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Budgets Respectés */}
+              <div>
+                <h3 className="text-lg font-semibold text-success-700 mb-3 flex items-center">
+                  <Award className="h-5 w-5 mr-2" />
+                  Budgets Respectés
+                </h3>
+                {monthlyReviewData.respected_budgets.length > 0 ? (
+                  <ul className="space-y-2 max-h-40 overflow-y-auto pr-2">
+                    {monthlyReviewData.respected_budgets.map((budget) => (
+                      <li key={budget.category_name} className="flex justify-between items-center text-sm p-2 bg-success-50 rounded-md">
+                        <span className="font-medium text-gray-800">{budget.category_name}</span>
+                        <span className="text-success-600 font-semibold">
+                          Reste: {formatCurrency(budget.difference)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">Aucun budget respecté ce mois-là.</p>
+                )}
+              </div>
+
+              {/* Budgets Dépassés */}
+              <div>
+                <h3 className="text-lg font-semibold text-red-700 mb-3 flex items-center">
+                  <AlertTriangle className="h-5 w-5 mr-2" />
+                  Budgets Dépassés
+                </h3>
+                {monthlyReviewData.exceeded_budgets.length > 0 ? (
+                  <ul className="space-y-2 max-h-40 overflow-y-auto pr-2">
+                    {monthlyReviewData.exceeded_budgets.map((budget) => (
+                      <li key={budget.category_name} className="flex justify-between items-center text-sm p-2 bg-red-50 rounded-md">
+                        <span className="font-medium text-gray-800">{budget.category_name}</span>
+                        <span className="text-red-600 font-semibold">
+                          Dépassement: {formatCurrency(Math.abs(budget.difference))}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">Félicitations ! Aucun budget dépassé.</p>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )}
+      </div>
+      {/* --- FIN DU BLOC REVUE MENSUELLE --- */}
 
 
       {/* ---

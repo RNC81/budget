@@ -217,6 +217,29 @@ class SavingsGoalAdjust(BaseModel):
     action: str # "add" or "remove"
 # --- FIN NOUVEAUTÉ ---
 
+# --- NOUVEAU : Modèles pour la Revue Mensuelle (Idée 4) ---
+class BiggestExpense(BaseModel):
+    description: Optional[str]
+    amount: float
+    date: datetime
+
+class BudgetReviewDetail(BaseModel):
+    category_name: str
+    amount_budgeted: float
+    amount_spent: float
+    difference: float # Négatif si dépassé
+
+class MonthlyReviewResponse(BaseModel):
+    display_period: str
+    total_income: float
+    total_expense: float
+    total_saved: float
+    savings_rate: float
+    biggest_expense: Optional[BiggestExpense]
+    respected_budgets: List[BudgetReviewDetail]
+    exceeded_budgets: List[BudgetReviewDetail]
+# --- FIN NOUVEAUTÉ ---
+
 
 # Modèles de Requête (Identiques)
 class CategoryCreate(BaseModel):
@@ -1420,6 +1443,108 @@ async def get_dashboard_stats(
         
         "savings_goals_progress": savings_goals_progress # <--- NOUVELLE DONNÉE
     }
+
+# --- NOUVEAU : Route pour la Revue Mensuelle (Idée 4) ---
+@app.get("/api/dashboard/monthly-review", response_model=MonthlyReviewResponse)
+async def get_monthly_review(
+    month: Optional[int] = None, 
+    year: Optional[int] = None, 
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """Calcule un résumé complet pour un mois donné (ou le mois précédent par défaut)."""
+    
+    now = datetime.now(timezone.utc)
+    month_names_full = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
+    
+    target_month, target_year = month, year
+    
+    if target_month is None or target_year is None:
+        # Par défaut : le mois précédent
+        today = now.replace(day=1) # 1er du mois actuel
+        last_day_prev_month = today - timedelta(days=1)
+        start_date = last_day_prev_month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_date = today.replace(hour=0, minute=0, second=0, microsecond=0)
+        target_month = start_date.month
+        target_year = start_date.year
+    else:
+        # Mois spécifique fourni
+        try:
+            start_date = datetime(target_year, target_month, 1, tzinfo=timezone.utc)
+            if target_month == 12:
+                end_date = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
+            else:
+                end_date = datetime(target_year, target_month + 1, 1, tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid month or year.")
+
+    display_period = f"{month_names_full[target_month - 1]} {target_year}"
+    
+    # 1. Récupérer les transactions de la période
+    transactions = await transactions_collection.find({
+        "date": {"$gte": start_date, "$lt": end_date},
+        "user_id": current_user.id
+    }).to_list(None)
+    
+    # 2. Calculer les totaux
+    total_income = sum(t["amount"] for t in transactions if t["type"] == "Revenu")
+    total_expense = sum(t["amount"] for t in transactions if t["type"] == "Dépense")
+    total_saved = total_income - total_expense
+    savings_rate = (total_saved / total_income) * 100 if total_income > 0 else 0.0
+    
+    # 3. Trouver la plus grosse dépense
+    expense_transactions = [t for t in transactions if t["type"] == "Dépense"]
+    biggest_expense_response = None
+    if expense_transactions:
+        biggest_expense_doc = max(expense_transactions, key=lambda t: t["amount"])
+        biggest_expense_response = BiggestExpense(
+            description=biggest_expense_doc.get("description"),
+            amount=biggest_expense_doc["amount"],
+            date=biggest_expense_doc["date"]
+        )
+        
+    # 4. Analyser les budgets
+    user_budgets = await budgets_collection.find({"user_id": current_user.id}).to_list(None)
+    user_categories = await categories_collection.find({"user_id": current_user.id}).to_list(None)
+    category_name_map = {cat["id"]: cat["name"] for cat in user_categories}
+    
+    spending_by_category = {}
+    for t in expense_transactions:
+        if t.get("category_id"):
+            cat_id = t["category_id"]
+            spending_by_category[cat_id] = spending_by_category.get(cat_id, 0) + t["amount"]
+
+    respected_budgets = []
+    exceeded_budgets = []
+    
+    for budget in user_budgets:
+        cat_id = budget["category_id"]
+        amount_budgeted = budget["amount"]
+        amount_spent = spending_by_category.get(cat_id, 0)
+        
+        detail = BudgetReviewDetail(
+            category_name=category_name_map.get(cat_id, "Catégorie inconnue"),
+            amount_budgeted=amount_budgeted,
+            amount_spent=amount_spent,
+            difference=amount_budgeted - amount_spent
+        )
+        
+        if amount_spent > amount_budgeted:
+            exceeded_budgets.append(detail)
+        else:
+            respected_budgets.append(detail)
+
+    # 5. Retourner la réponse
+    return MonthlyReviewResponse(
+        display_period=display_period,
+        total_income=total_income,
+        total_expense=total_expense,
+        total_saved=total_saved,
+        savings_rate=savings_rate,
+        biggest_expense=biggest_expense_response,
+        respected_budgets=respected_budgets,
+        exceeded_budgets=exceeded_budgets
+    )
+# --- FIN NOUVEAUTÉ ---
 
 
 # Lancement du serveur (Identique)

@@ -219,5 +219,27 @@ export const deleteSavingsGoal = async (goalId) => {
 };
 // --- FIN NOUVEAUTÉ ---
 
+// --- NOUVEAU : Fonctions du Dashboard (Idée 4) ---
+
+/**
+ * Récupère la revue mensuelle (total épargné, plus grosse dépense, budgets).
+ * Si month et year ne sont pas fournis, le backend renvoie le mois précédent.
+ * @param {number | null} month - Le mois (1-12)
+ * @param {number | null} year - L'année (ex: 2024)
+ */
+export const getMonthlyReview = async (month = null, year = null) => {
+  const params = new URLSearchParams();
+  if (month) {
+    params.append('month', month);
+  }
+  if (year) {
+    params.append('year', year);
+  }
+
+  // Si des paramètres existent, axios les ajoutera. Sinon, l'appel sera simple.
+  return await api.get('/api/dashboard/monthly-review', { params: params });
+};
+// --- FIN NOUVEAUTÉ ---
+
 
 export default api;
