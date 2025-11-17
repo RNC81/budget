@@ -240,10 +240,10 @@ function App() {
           Connexion au service sécurisé...
         </h1>
         <p className="text-gray-600 mt-2">
-          Le premier démarrage de la journée peut prendre jusqu'à 40 secondes.
+          Le démarrage peut prendre jusqu'à 40 secondes.
         </p>
         <p className="text-gray-600 mt-1">
-          (Mise en route du serveur sur notre plan gratuit 🚀)
+          (Mise en route du serveur)
         </p>
       </div>
     );
