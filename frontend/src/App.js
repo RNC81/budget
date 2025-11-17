@@ -27,6 +27,11 @@ import {
   // --- FIN AJOUT DEVISE ---
 } from './api';
 
+// --- NOUVEAU : Import de l'instance 'api' et de 'Loader' ---
+import api from './api';
+import { Loader } from 'lucide-react';
+// --- FIN NOUVEAU ---
+
 // --- Création du Contexte d'Authentification ---
 const AuthContext = createContext(null);
 
@@ -204,8 +209,47 @@ function PublicRoute({ children }) {
   return children;
 }
 
-// --- Composant App principal ---
+// --- Composant App principal (MODIFIÉ) ---
 function App() {
+  
+  // --- NOUVEAU : État pour le démarrage à froid de Render ---
+  const [isServerReady, setIsServerReady] = useState(false);
+
+  useEffect(() => {
+    console.log("Ping du serveur pour le démarrage (cold start)...");
+    
+    // On appelle l'API de santé pour "réveiller" le backend
+    // S'il dort, cet appel prendra 20-40s.
+    api.get('/api/health')
+      .then(() => console.log("Réponse du serveur reçue."))
+      .catch((err) => console.warn("Échec du ping de démarrage. (C'est peut-être un problème de réseau, on continue)", err))
+      .finally(() => {
+        // Que l'appel ait réussi ou échoué, on essaie de_
+        // de toute façon d'afficher l'application.
+        console.log("Démarrage terminé. Affichage de l'application.");
+        setIsServerReady(true);
+      });
+  }, []); // [] = s'exécute une seule fois au montage de l'app
+
+  // --- NOUVEAU : Affichage de l'écran de chargement ---
+  if (!isServerReady) {
+    return (
+      <div className="flex flex-col justify-center items-center min-h-screen bg-gray-50 text-center px-4">
+        <Loader className="h-12 w-12 animate-spin text-primary-600" />
+        <h1 className="text-2xl font-semibold text-gray-800 mt-6">
+          Connexion au service sécurisé...
+        </h1>
+        <p className="text-gray-600 mt-2">
+          Le premier démarrage de la journée peut prendre jusqu'à 40 secondes.
+        </p>
+        <p className="text-gray-600 mt-1">
+          (Mise en route du serveur sur notre plan gratuit 🚀)
+        </p>
+      </div>
+    );
+  }
+
+  // --- L'application normale s'affiche seulement après le réveil ---
   return (
     <Router>
       <AuthProvider> 
@@ -297,4 +341,3 @@ function App() {
 }
 
 export default App;
-
