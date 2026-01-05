@@ -241,5 +241,35 @@ export const getMonthlyReview = async (month = null, year = null) => {
 };
 // --- FIN NOUVEAUTÉ ---
 
+// --- NOUVEAUTÉ : Importation PDF (Idée 5) ---
+
+/**
+ * Envoie un fichier PDF au backend pour extraction des transactions.
+ * @param {File} file - Le fichier PDF sélectionné par l'utilisateur.
+ * @returns {Promise} - La liste des transactions détectées.
+ */
+export const parsePdfTransactions = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  return await api.post('/api/transactions/parse-pdf', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+};
+
+/**
+ * Insère plusieurs transactions en une seule fois (utilisé après validation du PDF/CSV).
+ * @param {Array} transactions - Liste d'objets TransactionCreate.
+ */
+export const bulkCreateTransactions = async (transactions) => {
+  return await api.post('/api/transactions/bulk', {
+    transactions: transactions
+  });
+};
+
+// --- FIN NOUVEAUTÉ ---
+
 
 export default api;

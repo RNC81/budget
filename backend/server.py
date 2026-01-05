@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -7,6 +7,9 @@ from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 import os
 import uuid
+import re
+import io
+import pdfplumber
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 
@@ -17,7 +20,6 @@ from sendgrid.helpers.mail import Mail
 # --- NOUVEAUX IMPORTS POUR MFA (TOTP) ---
 import pyotp
 import qrcode
-import io
 import base64
 # --- FIN DES NOUVEAUX IMPORTS ---
 
@@ -808,6 +810,77 @@ async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- NOUVEAUTÉ : ANALYSE PDF (Idée 5) ---
+
+@app.post("/api/transactions/parse-pdf")
+async def parse_pdf_transactions(file: UploadFile = File(...), current_user: UserInDB = Depends(get_current_user)):
+    """Analyse un relevé bancaire PDF pour en extraire les transactions potentielles."""
+    try:
+        contents = await file.read()
+        pdf_file = io.BytesIO(contents)
+        extracted_transactions = []
+        
+        # Regex pour détecter les dates françaises JJ/MM/AAAA ou JJ/MM/AA ou JJ/MM
+        date_pattern = r'(\d{2}/\d{2}(?:/\d{2,4})?)'
+        # Regex pour les montants (ex: 123,45 ou 1 234,56 ou -12,00)
+        amount_pattern = r'(-?\d+(?:\s?\d+)*(?:[.,]\d{2}))'
+
+        with pdfplumber.open(pdf_file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if not text: continue
+                
+                lines = text.split('\n')
+                for line in lines:
+                    # On cherche une date dans la ligne
+                    date_match = re.search(date_pattern, line)
+                    if not date_match: continue
+                    
+                    # On cherche un montant dans la ligne
+                    amount_matches = re.findall(amount_pattern, line)
+                    if not amount_matches: continue
+                    
+                    # Extraction de la date
+                    raw_date = date_match.group(1)
+                    try:
+                        # On essaie d'ajouter l'année si elle manque (JJ/MM)
+                        if len(raw_date) <= 5:
+                            parsed_date = datetime.strptime(f"{raw_date}/{datetime.now().year}", "%d/%m/%Y")
+                        elif len(raw_date) <= 8:
+                            parsed_date = datetime.strptime(raw_date, "%d/%m/%y")
+                        else:
+                            parsed_date = datetime.strptime(raw_date, "%d/%m/%Y")
+                        parsed_date = parsed_date.replace(tzinfo=timezone.utc)
+                    except: continue
+
+                    # On tente de récupérer le montant. Souvent sur un relevé, 
+                    # le dernier montant de la ligne est le solde, l'avant-dernier est l'opération.
+                    # Cette logique est heuristique et pourra être affinée.
+                    raw_amount = amount_matches[-1].replace(' ', '').replace(',', '.')
+                    amount = float(raw_amount)
+                    
+                    # Type basé sur le signe (positif=revenu, négatif=dépense)
+                    t_type = "Revenu" if amount > 0 else "Dépense"
+                    
+                    # Description : tout ce qui n'est pas la date ou le montant
+                    description = line.replace(raw_date, '').replace(amount_matches[-1], '').strip()
+                    
+                    extracted_transactions.append({
+                        "date": parsed_date.isoformat(),
+                        "amount": abs(amount),
+                        "type": t_type,
+                        "description": description or "Transaction PDF",
+                        "category_id": None,
+                        "subcategory_id": None
+                    })
+
+        return extracted_transactions
+    except Exception as e:
+        print(f"Erreur lors de l'analyse PDF : {e}")
+        raise HTTPException(status_code=500, detail=f"Échec de l'analyse du PDF : {str(e)}")
+
+# --- FIN NOUVEAUTÉ PDF ---
+
 # Recurring Transactions
 @app.get("/api/recurring-transactions")
 async def get_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
@@ -906,7 +979,7 @@ async def delete_budget(budget_id: str, current_user: UserInDB = Depends(get_cur
     await budgets_collection.delete_one({"id": budget_id, "user_id": current_user.id})
     return {"message": "Budget deleted successfully"}
 
-# --- CORRECTION MAJEURE : Objectifs d'Épargne (Bug de Fausse Erreur) ---
+# --- Objectifs d'Épargne ---
 
 @app.get("/api/savings-goals")
 async def get_savings_goals(current_user: UserInDB = Depends(get_current_user)):
@@ -937,7 +1010,6 @@ async def update_savings_goal(goal_id: str, goal: SavingsGoalUpdate, current_use
     if update_data:
         await savings_goals_collection.update_one({"id": goal_id, "user_id": current_user.id}, {"$set": update_data})
     
-    # --- FIX : Nettoyage manuel du retour pour éviter l'erreur de sérialisation ObjectId ---
     updated = await savings_goals_collection.find_one({"id": goal_id, "user_id": current_user.id})
     if updated:
         updated.pop("_id", None)
@@ -956,7 +1028,6 @@ async def adjust_savings_goal(goal_id: str, adjust: SavingsGoalAdjust, current_u
 
     await savings_goals_collection.update_one({"id": goal_id, "user_id": current_user.id}, {"$set": {"current_amount": current_amount}})
     
-    # --- FIX : Nettoyage manuel du retour pour éviter l'erreur de sérialisation ObjectId ---
     updated = await savings_goals_collection.find_one({"id": goal_id, "user_id": current_user.id})
     if updated:
         updated.pop("_id", None)

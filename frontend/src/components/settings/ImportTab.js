@@ -1,67 +1,69 @@
 import React, { useState, useEffect } from 'react';
-import api from '../../api';
-import { Upload, Loader, AlertCircle, CheckCircle } from 'lucide-react';
+import api, { parsePdfTransactions, bulkCreateTransactions } from '../../api';
+import { 
+  Upload, 
+  Loader, 
+  AlertCircle, 
+  CheckCircle, 
+  FileText, 
+  Table, 
+  Trash2, 
+  Check, 
+  ChevronRight,
+  Info
+} from 'lucide-react';
 import Papa from 'papaparse';
 
-// Fait correspondre les mois du CSV aux numéros (base 0 pour JS Date)
-// Gère "Août" (2024) et "Aoūt" (2025) et "Aout" (sans accent)
+// --- LOGIQUE CSV EXISTANTE (INCHANGÉE) ---
 const monthMap = {
   'janvier': 0, 'février': 1, 'mars': 2, 'avril': 3, 'mai': 4, 'juin': 5,
   'juillet': 6, 'août': 7, 'aoūt': 7, 'aout': 7, 'septembre': 8, 'octobre': 9, 'novembre': 10, 'décembre': 11
 };
 
-// Fonction pour nettoyer les noms (utilisée pour les mois et les catégories)
 const normalizeString = (str) => (str || '').trim().toLowerCase();
 
 function ImportTab() {
-  const [file, setFile] = useState(null);
-  // On initialise en string pour être sûr, mais la nouvelle validation gère les deux
-  const [year, setYear] = useState(new Date().getFullYear().toString()); 
+  const [activeTab, setActiveTab] = useState('csv'); // 'csv' ou 'pdf'
+  
+  // États communs
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [categories, setCategories] = useState([]);
 
-  // Charge les catégories de l'application pour faire la correspondance
+  // États CSV
+  const [csvFile, setCsvFile] = useState(null);
+  const [year, setYear] = useState(new Date().getFullYear().toString());
+
+  // États PDF
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pdfPreview, setPdfPreview] = useState([]); // Liste des transactions extraites
+
   useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const response = await api.get('/api/categories');
-        setCategories(response.data);
-      } catch (err) {
-        setError('Impossible de charger les catégories. Veuillez actualiser.');
-      }
-    };
     fetchCategories();
   }, []);
 
-  const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
-    setError('');
-    setSuccess('');
+  const fetchCategories = async () => {
+    try {
+      const response = await api.get('/api/categories');
+      setCategories(response.data);
+    } catch (err) {
+      setError('Impossible de charger les catégories.');
+    }
   };
 
-  const handleYearChange = (e) => {
-    setYear(e.target.value);
-  };
-
-  const handleSubmit = async () => {
-    if (!file) {
+  // --- LOGIQUE CSV (EXISTANTE) ---
+  const handleCsvSubmit = async () => {
+    if (!csvFile) {
       setError('Veuillez sélectionner un fichier CSV.');
       return;
     }
-
-    // --- CORRECTION DU BUG DE VALIDATION ---
-    // On utilise une regex pour vérifier que 'year' est bien composé de 4 chiffres.
-    // Cela fonctionne que 'year' soit un nombre (2025) ou une chaîne ("2025").
     if (!/^\d{4}$/.test(year)) {
       setError('Veuillez entrer une année valide à 4 chiffres (ex: 2025).');
       return;
     }
-    // --- FIN DE LA CORRECTION ---
-
     if (categories.length === 0) {
-      setError('Les catégories ne sont pas encore chargées. Réessayez dans un instant.');
+      setError('Les catégories ne sont pas encore chargées.');
       return;
     }
 
@@ -69,113 +71,301 @@ function ImportTab() {
     setError('');
     setSuccess('');
 
-    Papa.parse(file, {
-      delimiter: ";", // Force le point-virgule
-      encoding: "ISO-8859-1", // Force la lecture des accents type "Excel Français"
+    Papa.parse(csvFile, {
+      delimiter: ";",
+      encoding: "ISO-8859-1",
       skipEmptyLines: true,
       complete: async (results) => {
         try {
           const transactionsToUpload = processCSV(results.data, categories, parseInt(year));
-          
           if (transactionsToUpload.length === 0) {
-            setError('Aucune transaction valide trouvée dans le fichier. Vérifiez le format ou les noms de catégories.');
-            setLoading(false);
-            return;
+            throw new Error('Aucune transaction valide trouvée.');
           }
-
-          // Envoie les transactions au backend
           const response = await api.post('/api/transactions/bulk', {
             transactions: transactionsToUpload,
           });
-
-          setSuccess(response.data.message || 'Importation réussie !');
-          setFile(null);
-          // Réinitialise le champ 'file' dans le DOM pour pouvoir re-télécharger le même fichier
-          if(document.querySelector('input[type="file"]')) {
-            document.querySelector('input[type="file"]').value = '';
-          }
+          setSuccess(response.data.message || 'Importation CSV réussie !');
+          setCsvFile(null);
+          if(document.querySelector('input[type="file"]')) document.querySelector('input[type="file"]').value = '';
         } catch (err) {
-          setError(err.message || 'Une erreur est survenue lors du traitement ou de l\'envoi.');
+          setError(err.message);
         } finally {
           setLoading(false);
         }
       },
       error: (err) => {
-        setError(`Erreur lors de la lecture du fichier : ${err.message}`);
+        setError(`Erreur lecture : ${err.message}`);
         setLoading(false);
       },
     });
   };
 
+  // --- NOUVELLE LOGIQUE PDF (IDÉE 5) ---
+  const handlePdfAnalyze = async () => {
+    if (!pdfFile) {
+      setError('Veuillez sélectionner un fichier PDF.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setPdfPreview([]);
+
+    try {
+      const response = await parsePdfTransactions(pdfFile);
+      // On ajoute un ID temporaire pour la gestion de la liste en local
+      const dataWithTempIds = response.data.map(t => ({
+        ...t,
+        tempId: uuidv4_fallback(),
+        category_id: '' // L'utilisateur devra choisir
+      }));
+      setPdfPreview(dataWithTempIds);
+      if (dataWithTempIds.length === 0) {
+        setError("Aucune transaction n'a été détectée dans ce PDF.");
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || "Erreur lors de l'analyse du PDF.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRemovePdfRow = (tempId) => {
+    setPdfPreview(prev => prev.filter(t => t.tempId !== tempId));
+  };
+
+  const handleUpdatePdfRow = (tempId, field, value) => {
+    setPdfPreview(prev => prev.map(t => 
+      t.tempId === tempId ? { ...t, [field]: value } : t
+    ));
+  };
+
+  const handleFinalPdfImport = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      // On prépare les données (suppression des IDs temporaires)
+      const transactions = pdfPreview.map(({ tempId, ...rest }) => ({
+        ...rest,
+        category_id: rest.category_id || null
+      }));
+
+      await bulkCreateTransactions(transactions);
+      setSuccess(`${transactions.length} transactions importées avec succès !`);
+      setPdfPreview([]);
+      setPdfFile(null);
+    } catch (err) {
+      setError("Erreur lors de l'importation finale.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const uuidv4_fallback = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
+
   return (
     <div className="space-y-6">
-      <h3 className="text-lg font-semibold text-gray-900">Importer depuis un CSV</h3>
-      
+      {/* Sélecteur d'onglet */}
+      <div className="flex p-1 bg-gray-100 rounded-xl w-fit">
+        <button
+          onClick={() => { setActiveTab('csv'); setError(''); setSuccess(''); }}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            activeTab === 'csv' ? 'bg-white text-primary-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Table className="h-4 w-4" />
+          <span>Format CSV "Mon Budget"</span>
+        </button>
+        <button
+          onClick={() => { setActiveTab('pdf'); setError(''); setSuccess(''); }}
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            activeTab === 'pdf' ? 'bg-white text-primary-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <FileText className="h-4 w-4" />
+          <span>Relevé Bancaire PDF</span>
+        </button>
+      </div>
+
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start space-x-3">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start space-x-3 animate-in fade-in zoom-in-95">
           <AlertCircle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-red-600">{error}</p>
+          <p className="text-sm text-red-600 font-medium">{error}</p>
         </div>
       )}
       {success && (
-        <div className="bg-success-50 border border-success-200 rounded-lg p-4 flex items-start space-x-3">
+        <div className="bg-success-50 border border-success-200 rounded-xl p-4 flex items-start space-x-3 animate-in fade-in zoom-in-95">
           <CheckCircle className="h-5 w-5 text-success-600 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-success-600">{success}</p>
+          <p className="text-sm text-success-600 font-medium">{success}</p>
         </div>
       )}
 
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Année des données (YYYY)
-          </label>
-          <input
-            type="number" // On garde "number" pour le clavier mobile, la validation gère le reste
-            value={year}
-            onChange={handleYearChange}
-            placeholder="Ex: 2025"
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-          />
+      {/* CONTENU CSV */}
+      {activeTab === 'csv' && (
+        <div className="space-y-4 bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">Année des données</label>
+              <input
+                type="number"
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">Fichier CSV</label>
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => setCsvFile(e.target.files[0])}
+                className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-bold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100 transition-all"
+              />
+            </div>
+          </div>
+          <button
+            onClick={handleCsvSubmit}
+            disabled={loading || !csvFile}
+            className="w-full bg-gradient-to-r from-primary-600 to-success-600 text-white px-4 py-4 rounded-xl font-bold hover:shadow-xl transition-all disabled:opacity-50 flex items-center justify-center space-x-2"
+          >
+            {loading ? <Loader className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
+            <span>{loading ? 'Traitement en cours...' : 'Importer le budget annuel'}</span>
+          </button>
         </div>
+      )}
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Fichier CSV (format "Mon Budget XXXX")
-          </label>
-          <input
-            type="file"
-            accept=".csv"
-            onChange={handleFileChange}
-            className="w-full text-sm text-gray-500
-                      file:mr-4 file:py-2 file:px-4
-                      file:rounded-lg file:border-0
-                      file:text-sm file:font-semibold
-                      file:bg-primary-50 file:text-primary-700
-                      hover:file:bg-primary-100"
-          />
-        </div>
-
-        <button
-          onClick={handleSubmit}
-          disabled={loading || !file}
-          className="w-full bg-gradient-to-r from-primary-600 to-success-600 text-white px-4 py-3 rounded-lg font-medium hover:shadow-lg transition-all disabled:opacity-50 flex items-center justify-center space-x-2"
-        >
-          {loading ? (
-            <Loader className="h-5 w-5 animate-spin" />
+      {/* CONTENU PDF */}
+      {activeTab === 'pdf' && (
+        <div className="space-y-6">
+          {!pdfPreview.length ? (
+            <div className="bg-white border border-gray-200 rounded-2xl p-8 text-center space-y-4 shadow-sm">
+              <div className="bg-primary-50 h-16 w-16 rounded-full flex items-center justify-center mx-auto">
+                <FileText className="h-8 w-8 text-primary-600" />
+              </div>
+              <div>
+                <h4 className="text-lg font-bold text-gray-900">Analyse de relevé bancaire</h4>
+                <p className="text-sm text-gray-500 max-w-xs mx-auto">Téléchargez votre PDF pour extraire automatiquement les transactions.</p>
+              </div>
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={(e) => setPdfFile(e.target.files[0])}
+                className="hidden"
+                id="pdf-upload"
+              />
+              <label
+                htmlFor="pdf-upload"
+                className="inline-block px-6 py-3 rounded-xl border-2 border-dashed border-gray-300 text-gray-600 font-bold hover:border-primary-500 hover:text-primary-600 cursor-pointer transition-all"
+              >
+                {pdfFile ? pdfFile.name : "Choisir un fichier PDF"}
+              </label>
+              {pdfFile && (
+                <button
+                  onClick={handlePdfAnalyze}
+                  disabled={loading}
+                  className="block w-full bg-primary-600 text-white px-4 py-4 rounded-xl font-bold hover:bg-primary-700 transition-all flex items-center justify-center space-x-2"
+                >
+                  {loading ? <Loader className="h-5 w-5 animate-spin" /> : <ChevronRight className="h-5 w-5" />}
+                  <span>Lancer l'analyse</span>
+                </button>
+              )}
+            </div>
           ) : (
-            <Upload className="h-5 w-5" />
+            <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-xl animate-in slide-in-from-bottom-4">
+              <div className="p-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+                <h4 className="font-bold text-gray-900 flex items-center">
+                  <Check className="h-5 w-5 text-success-600 mr-2" />
+                  {pdfPreview.length} transactions détectées
+                </h4>
+                <div className="flex space-x-2">
+                   <button 
+                    onClick={() => setPdfPreview([])}
+                    className="text-sm font-bold text-gray-500 hover:text-red-600 px-3 py-1"
+                  >
+                    Annuler
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-x-auto max-h-[500px]">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-white sticky top-0 shadow-sm">
+                    <tr>
+                      <th className="p-4 text-xs font-bold text-gray-500 uppercase">Date</th>
+                      <th className="p-4 text-xs font-bold text-gray-500 uppercase">Description</th>
+                      <th className="p-4 text-xs font-bold text-gray-500 uppercase">Montant</th>
+                      <th className="p-4 text-xs font-bold text-gray-500 uppercase">Catégorie</th>
+                      <th className="p-4 text-xs font-bold text-gray-500 uppercase"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {pdfPreview.map((t) => (
+                      <tr key={t.tempId} className="hover:bg-gray-50 transition-colors">
+                        <td className="p-4 text-sm font-medium text-gray-900">
+                          {new Date(t.date).toLocaleDateString()}
+                        </td>
+                        <td className="p-4">
+                          <input 
+                            type="text"
+                            value={t.description}
+                            onChange={(e) => handleUpdatePdfRow(t.tempId, 'description', e.target.value)}
+                            className="bg-transparent border-none focus:ring-1 focus:ring-primary-500 rounded p-1 w-full text-sm"
+                          />
+                        </td>
+                        <td className={`p-4 text-sm font-bold ${t.type === 'Revenu' ? 'text-success-600' : 'text-red-600'}`}>
+                          {t.type === 'Revenu' ? '+' : '-'}{t.amount.toFixed(2)}€
+                        </td>
+                        <td className="p-4">
+                          <select
+                            value={t.category_id}
+                            onChange={(e) => handleUpdatePdfRow(t.tempId, 'category_id', e.target.value)}
+                            className="text-xs p-2 rounded-lg border border-gray-200 bg-white focus:ring-2 focus:ring-primary-500 outline-none w-full"
+                          >
+                            <option value="">Sélectionner...</option>
+                            {categories.filter(c => c.type === t.type).map(cat => (
+                              <option key={cat.id} value={cat.id}>{cat.name}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="p-4 text-right">
+                          <button onClick={() => handleRemovePdfRow(t.tempId)} className="text-gray-400 hover:text-red-600 p-1">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-6 bg-gray-50 border-t border-gray-200">
+                <button
+                  onClick={handleFinalPdfImport}
+                  disabled={loading}
+                  className="w-full bg-gradient-to-r from-primary-600 to-success-600 text-white py-4 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all flex items-center justify-center space-x-2"
+                >
+                  {loading ? <Loader className="h-5 w-5 animate-spin" /> : <CheckCircle className="h-5 w-5" />}
+                  <span>Valider et importer en base de données</span>
+                </button>
+              </div>
+            </div>
           )}
-          <span>{loading ? 'Traitement...' : 'Lancer l\'importation'}</span>
-        </button>
-      </div>
-      
-      <div className="bg-gray-50 p-4 rounded-lg border">
-        <h4 className="font-semibold text-gray-800">Instructions :</h4>
-        <ul className="list-disc list-inside text-sm text-gray-600 mt-2 space-y-1">
-          <li>Le script s'attend à un fichier CSV avec **point-virgule (;) comme séparateur**.</li>
-          <li>L'année doit être correctement renseignée.</li>
-          <li>Les noms des catégories dans le CSV (colonne B) doivent **exactement** correspondre aux noms de vos catégories dans l'application (pense aux espaces ou aux `/` !).</li>
-          <li>Les lignes "Total" et les lignes vides seront ignorées.</li>
+        </div>
+      )}
+
+      {/* Instructions communes */}
+      <div className="bg-gray-50 p-6 rounded-2xl border border-gray-200 space-y-3">
+        <h4 className="font-bold text-gray-800 flex items-center">
+          <Info className="h-4 w-4 mr-2 text-primary-600" />
+          Instructions d'importation
+        </h4>
+        <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm text-gray-600">
+          <li className="flex items-center"><ChevronRight className="h-3 w-3 mr-2 text-primary-400" /> CSV : Séparateur point-virgule (;) requis.</li>
+          <li className="flex items-center"><ChevronRight className="h-3 w-3 mr-2 text-primary-400" /> PDF : Formats de dates FR (JJ/MM/AAAA) supportés.</li>
+          <li className="flex items-center"><ChevronRight className="h-3 w-3 mr-2 text-primary-400" /> Les noms des catégories doivent correspondre exactement.</li>
+          <li className="flex items-center"><ChevronRight className="h-3 w-3 mr-2 text-primary-400" /> Vérifiez toujours la preview avant de valider l'import PDF.</li>
         </ul>
       </div>
     </div>
@@ -183,64 +373,39 @@ function ImportTab() {
 }
 
 /**
- * Traite les données parsées du CSV pour les transformer en transactions
- * @param {Array} data - Données de PapaParse (Array d'Arrays)
- * @param {Array} appCategories - Liste des catégories de l'app (venant de /api/categories)
- * @param {number} year - L'année sélectionnée par l'utilisateur
- * @returns {Array} - Une liste d'objets TransactionCreate
+ * Traite les données parsées du CSV (Format Spécifique "Mon Budget")
  */
 function processCSV(data, appCategories, year) {
   const transactions = [];
-  
-  // --- LOGIQUE DE DÉTECTION D'EN-TÊTE AMÉLIORÉE ---
   let headerRowIndex = -1;
-  let headerRow = [];
-  const monthIndexes = {}; // Va stocker { 0: 2, 1: 3, ... } (moisJS: indexColonne)
+  const monthIndexes = {};
 
   for (let i = 0; i < data.length; i++) {
     const row = data[i].map(normalizeString);
     if (row.includes('janvier') && row.includes('décembre')) {
       headerRowIndex = i;
-      headerRow = row;
-      // On mappe les index de colonnes pour chaque mois
       for (let j = 0; j < row.length; j++) {
         const monthJS = monthMap[row[j]];
-        if (monthJS !== undefined) {
-          monthIndexes[monthJS] = j; // ex: monthIndexes[0] = 2 (colonne 'Janvier' est à l'index 2)
-        }
+        if (monthJS !== undefined) monthIndexes[monthJS] = j;
       }
       break;
     }
   }
 
-  if (headerRowIndex === -1) {
-    throw new Error('Impossible de trouver la ligne d\'en-tête des mois (Janvier, Février...)');
-  }
-  // --- FIN DE LA LOGIQUE D'EN-TÊTE ---
+  if (headerRowIndex === -1) throw new Error('En-tête des mois introuvable.');
 
-
-  // 2. Trouver la section des Revenus (en se basant sur "Salaire" ou "Total des revenus")
   const revenueStartIndex = data.findIndex(row => normalizeString(row[1]) === 'salaire');
   const revenueEndIndex = data.findIndex(row => normalizeString(row[1]) === 'total des revenus');
-  
-  // 3. Trouver la section des Dépenses (en se basant sur "Alimentation" ou "Total des dépenses")
   const expenseStartIndex = data.findIndex(row => normalizeString(row[1]).startsWith('alimentation'));
   const expenseEndIndex = data.findIndex(row => normalizeString(row[1]) === 'total des dépenses');
 
-  if (revenueStartIndex === -1 || expenseStartIndex === -1) {
-    throw new Error('Impossible de trouver les sections "Salaire" ou "Alimentation".');
-  }
+  if (revenueStartIndex === -1 || expenseStartIndex === -1) throw new Error('Sections Salaire ou Alimentation introuvables.');
 
-  // 4. Créer un mappage Nom de Catégorie -> ID & Type
   const categoryMap = {};
   appCategories.forEach(cat => {
-    categoryMap[normalizeString(cat.name)] = {
-      id: cat.id,
-      type: cat.type,
-    };
+    categoryMap[normalizeString(cat.name)] = { id: cat.id, type: cat.type };
   });
 
-  // 5. Parcourir les lignes de données (revenus et dépenses)
   const dataRows = [
     ...data.slice(revenueStartIndex, revenueEndIndex > -1 ? revenueEndIndex : data.length),
     ...data.slice(expenseStartIndex, expenseEndIndex > -1 ? expenseEndIndex : data.length)
@@ -248,49 +413,31 @@ function processCSV(data, appCategories, year) {
 
   for (const row of dataRows) {
     const categoryName = normalizeString(row[1]);
-    
-    // Ignore les lignes vides ou les totaux
-    if (!categoryName || categoryName.includes('total')) {
-      continue;
-    }
+    if (!categoryName || categoryName.includes('total')) continue;
 
     const categoryInfo = categoryMap[categoryName];
-    
-    if (!categoryInfo) {
-      console.warn(`Catégorie ignorée (non trouvée dans l'app) : "${row[1].trim()}"`);
-      continue;
-    }
+    if (!categoryInfo) continue;
 
-    // 6. Parcourir les 12 mois
     for (let monthIndex = 0; monthIndex < 12; monthIndex++) {
-      // Trouve la colonne correspondante (ex: colonne 2 pour mois 0)
       const colIndex = monthIndexes[monthIndex];
-      if (colIndex === undefined) continue; // Mois non trouvé dans l'en-tête ?
+      if (colIndex === undefined) continue;
 
-      // --- Logique de nettoyage des montants améliorée ---
-      // Enlève "€", enlève les espaces (ex: "1 677,01 €")
       const amountStr = (row[colIndex] || '').replace(/€/g, '').replace(/\s/g, '').trim();
-      // Remplace la virgule décimale par un point
       const amount = parseFloat(amountStr.replace(',', '.'));
 
-      if (!amountStr || isNaN(amount) || amount === 0) {
-        continue; // Ignore les cellules vides ou à 0
-      }
+      if (!amountStr || isNaN(amount) || amount === 0) continue;
       
-      // On met le 15 du mois par défaut pour éviter les pbs de fuseaux horaires
       const transactionDate = new Date(year, monthIndex, 15);
-      
       transactions.push({
         date: transactionDate.toISOString(),
-        amount: Math.abs(amount), // Assure que le montant est positif
-        type: categoryInfo.type, // "Revenu" ou "Dépense"
+        amount: Math.abs(amount),
+        type: categoryInfo.type,
         description: `Import CSV - ${row[1].trim()}`,
         category_id: categoryInfo.id,
         subcategory_id: null,
       });
     }
   }
-  
   return transactions;
 }
 
