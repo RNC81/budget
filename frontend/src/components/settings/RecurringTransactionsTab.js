@@ -1,6 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api';
-import { Plus, Edit2, Trash2, Save, X, Loader, Play, CheckCircle } from 'lucide-react';
+import { 
+  Plus, 
+  Edit2, 
+  Trash2, 
+  Save, 
+  X, 
+  Loader, 
+  Play, 
+  CheckCircle, 
+  AlertCircle, 
+  Clock, 
+  TrendingUp, 
+  CreditCard 
+} from 'lucide-react';
 
 function RecurringTransactionsTab() {
   const [recurring, setRecurring] = useState([]);
@@ -29,10 +42,15 @@ function RecurringTransactionsTab() {
     day_of_month: 1,
   });
 
+  // --- NOUVEAUX ÉTATS POUR LA VUE VISUELLE ---
+  const [overview, setOverview] = useState([]);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+
   useEffect(() => {
     fetchCategories();
     fetchSubcategories();
     fetchRecurring();
+    fetchOverview(); // Récupère l'état des paiements du mois
   }, []);
 
   const fetchCategories = async () => {
@@ -65,6 +83,19 @@ function RecurringTransactionsTab() {
     }
   };
 
+  // --- NOUVELLE FONCTION POUR LA VUE VISUELLE ---
+  const fetchOverview = async () => {
+    setOverviewLoading(true);
+    try {
+      const response = await api.get('/api/recurring-transactions/overview');
+      setOverview(response.data);
+    } catch (error) {
+      console.error('Error fetching overview:', error);
+    } finally {
+      setOverviewLoading(false);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!window.confirm('Générer les transactions récurrentes pour ce mois ?')) {
       return;
@@ -74,6 +105,9 @@ function RecurringTransactionsTab() {
     try {
       const response = await api.post('/api/recurring-transactions/generate');
       alert(response.data.message);
+      // On rafraîchit tout après génération
+      fetchRecurring();
+      fetchOverview();
     } catch (error) {
       console.error('Error generating transactions:', error);
       alert('Erreur lors de la génération');
@@ -103,6 +137,7 @@ function RecurringTransactionsTab() {
       });
       setShowAddForm(false);
       fetchRecurring();
+      fetchOverview();
     } catch (error) {
       console.error('Error adding recurring transaction:', error);
       alert('Erreur lors de l\'ajout');
@@ -133,6 +168,7 @@ function RecurringTransactionsTab() {
       });
       setEditingId(null);
       fetchRecurring();
+      fetchOverview();
     } catch (error) {
       console.error('Error updating recurring transaction:', error);
       alert('Erreur lors de la modification');
@@ -147,6 +183,7 @@ function RecurringTransactionsTab() {
     try {
       await api.delete(`/api/recurring-transactions/${id}`);
       fetchRecurring();
+      fetchOverview();
     } catch (error) {
       console.error('Error deleting recurring transaction:', error);
       alert('Erreur lors de la suppression');
@@ -166,6 +203,16 @@ function RecurringTransactionsTab() {
   const filteredCategories = (type) => categories.filter(cat => cat.type === type);
   const filteredSubcategories = (categoryId) => subcategories.filter(sub => sub.category_id === categoryId);
 
+  // --- CALCUL DES STATS POUR LE RÉSUMÉ VISUEL ---
+  const calculateStats = () => {
+    const totalExpected = overview.reduce((acc, curr) => acc + curr.expected_amount, 0);
+    const totalPaid = overview.reduce((acc, curr) => acc + curr.paid_amount, 0);
+    const progress = totalExpected > 0 ? (totalPaid / totalExpected) * 100 : 0;
+    return { totalExpected, totalPaid, progress };
+  };
+
+  const { totalExpected, totalPaid, progress } = calculateStats();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -176,6 +223,48 @@ function RecurringTransactionsTab() {
 
   return (
     <div className="space-y-6">
+      {/* --- NOUVEAU BLOC : RÉSUMÉ VISUEL DES ABONNEMENTS --- */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-xl font-bold text-gray-900 flex items-center">
+            <CreditCard className="h-6 w-6 mr-2 text-primary-600" />
+            Suivi des abonnements du mois
+          </h3>
+          <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full capitalize">
+            {new Date().toLocaleString('fr-FR', { month: 'long', year: 'numeric' })}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+            <p className="text-xs font-bold text-gray-500 uppercase mb-1">Total Attendu</p>
+            <p className="text-2xl font-black text-gray-900">{totalExpected.toFixed(2)}€</p>
+          </div>
+          <div className="bg-success-50 p-4 rounded-xl border border-success-100">
+            <p className="text-xs font-bold text-success-600 uppercase mb-1">Total Payé</p>
+            <p className="text-2xl font-black text-success-700">{totalPaid.toFixed(2)}€</p>
+          </div>
+          <div className="bg-primary-50 p-4 rounded-xl border border-primary-100">
+            <p className="text-xs font-bold text-primary-600 uppercase mb-1">Reste à venir</p>
+            <p className="text-2xl font-black text-primary-700">{(totalExpected - totalPaid).toFixed(2)}€</p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex justify-between text-sm font-bold text-gray-700">
+            <span>Progression des charges fixes</span>
+            <span>{Math.round(progress)}%</span>
+          </div>
+          <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden border border-gray-200">
+            <div 
+              className="h-full bg-gradient-to-r from-primary-500 to-success-500 transition-all duration-1000 ease-out"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      </div>
+      {/* --- FIN DU NOUVEAU BLOC --- */}
+
       {/* Info Banner */}
       <div className="bg-primary-50 border border-primary-200 rounded-xl p-4">
         <div className="flex items-start space-x-3">
@@ -324,135 +413,163 @@ function RecurringTransactionsTab() {
         </div>
       )}
 
-      {/* Recurring Transactions List */}
+      {/* --- LISTE DÉTAILLÉE AVEC ÉTAT DE PAIEMENT DU MOIS --- */}
       <div className="space-y-3">
         {recurring.length === 0 ? (
           <p className="text-gray-500 text-center py-8">Aucune transaction récurrente configurée</p>
         ) : (
-          recurring.map((item) => (
-            <div
-              key={item.id}
-              className="bg-white border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow"
-            >
-              {editingId === item.id ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <select
-                      value={editForm.type}
-                      onChange={(e) => setEditForm({ ...editForm, type: e.target.value, category_id: '', subcategory_id: '' })}
-                      className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-                    >
-                      <option value="Dépense">Dépense</option>
-                      <option value="Revenu">Revenu</option>
-                    </select>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editForm.amount}
-                      onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
-                      className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-                    />
-                    <input
-                      type="text"
-                      value={editForm.description}
-                      onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                      placeholder="Description"
-                      className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-                    />
-                    <select
-                      value={editForm.category_id}
-                      onChange={(e) => setEditForm({ ...editForm, category_id: e.target.value, subcategory_id: '' })}
-                      className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-                    >
-                      <option value="">Aucune catégorie</option>
-                      {filteredCategories(editForm.type).map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={editForm.frequency}
-                      onChange={(e) => setEditForm({ ...editForm, frequency: e.target.value })}
-                      className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-                    >
-                      <option value="Mensuel">Mensuel</option>
-                      <option value="Annuel">Annuel</option>
-                    </select>
-                    <input
-                      type="number"
-                      min="1"
-                      max="31"
-                      value={editForm.day_of_month}
-                      onChange={(e) => setEditForm({ ...editForm, day_of_month: e.target.value })}
-                      className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
-                    />
-                  </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => handleUpdate(item.id)}
-                      className="text-success-600 hover:text-success-800 flex items-center space-x-1"
-                    >
-                      <Save className="h-4 w-4" />
-                      <span className="text-sm">Enregistrer</span>
-                    </button>
-                    <button
-                      onClick={() => setEditingId(null)}
-                      className="text-gray-600 hover:text-gray-800 flex items-center space-x-1"
-                    >
-                      <X className="h-4 w-4" />
-                      <span className="text-sm">Annuler</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-3 mb-2">
-                      <span
-                        className={`px-3 py-1 rounded-lg text-sm font-semibold ${
-                          item.type === 'Revenu'
-                            ? 'bg-success-100 text-success-700'
-                            : 'bg-red-100 text-red-700'
-                        }`}
+          recurring.map((item) => {
+            // On cherche l'état de ce paiement dans l'overview
+            const statusInfo = overview.find(o => o.id === item.id);
+            const isPaid = statusInfo?.status.startsWith("Payé");
+            const hasDiff = statusInfo?.status === "Payé (Différence)";
+
+            return (
+              <div
+                key={item.id}
+                className="bg-white border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow"
+              >
+                {editingId === item.id ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <select
+                        value={editForm.type}
+                        onChange={(e) => setEditForm({ ...editForm, type: e.target.value, category_id: '', subcategory_id: '' })}
+                        className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
                       >
-                        {item.type}
-                      </span>
-                      <span className="text-xl font-bold text-gray-900">
-                        {item.amount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
-                      </span>
+                        <option value="Dépense">Dépense</option>
+                        <option value="Revenu">Revenu</option>
+                      </select>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editForm.amount}
+                        onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+                        className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+                      />
+                      <input
+                        type="text"
+                        value={editForm.description}
+                        onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                        placeholder="Description"
+                        className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+                      />
+                      <select
+                        value={editForm.category_id}
+                        onChange={(e) => setEditForm({ ...editForm, category_id: e.target.value, subcategory_id: '' })}
+                        className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+                      >
+                        <option value="">Aucune catégorie</option>
+                        {filteredCategories(editForm.type).map(cat => (
+                          <option key={cat.id} value={cat.id}>{cat.name}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={editForm.frequency}
+                        onChange={(e) => setEditForm({ ...editForm, frequency: e.target.value })}
+                        className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+                      >
+                        <option value="Mensuel">Mensuel</option>
+                        <option value="Annuel">Annuel</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={editForm.day_of_month}
+                        onChange={(e) => setEditForm({ ...editForm, day_of_month: e.target.value })}
+                        className="px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500"
+                      />
                     </div>
-                    <p className="text-gray-700 font-medium">{item.description || 'Sans description'}</p>
-                    <div className="flex flex-wrap gap-2 mt-2 text-sm text-gray-600">
-                      <span className="bg-gray-100 px-2 py-1 rounded">
-                        {getCategoryName(item.category_id)}
-                      </span>
-                      {item.subcategory_id && (
-                        <span className="bg-gray-100 px-2 py-1 rounded">
-                          {getSubcategoryName(item.subcategory_id)}
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => handleUpdate(item.id)}
+                        className="text-success-600 hover:text-success-800 flex items-center space-x-1"
+                      >
+                        <Save className="h-4 w-4" />
+                        <span className="text-sm">Enregistrer</span>
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        className="text-gray-600 hover:text-gray-800 flex items-center space-x-1"
+                      >
+                        <X className="h-4 w-4" />
+                        <span className="text-sm">Annuler</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3 mb-2">
+                        <span
+                          className={`px-3 py-1 rounded-lg text-sm font-semibold ${
+                            item.type === 'Revenu'
+                              ? 'bg-success-100 text-success-700'
+                              : 'bg-red-100 text-red-700'
+                          }`}
+                        >
+                          {item.type}
                         </span>
+                        <span className="text-xl font-bold text-gray-900">
+                          {item.amount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                        </span>
+                        
+                        {/* INDICATEUR DE STATUT CE MOIS-CI */}
+                        {statusInfo && (
+                          <span className={`flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${
+                            isPaid ? (hasDiff ? 'bg-yellow-100 text-yellow-700' : 'bg-success-100 text-success-700') : 'bg-gray-100 text-gray-500'
+                          }`}>
+                            {isPaid ? (hasDiff ? <AlertCircle className="h-3 w-3 mr-1" /> : <CheckCircle className="h-3 w-3 mr-1" />) : <Clock className="h-3 w-3 mr-1" />}
+                            {statusInfo.status}
+                          </span>
+                        )}
+                      </div>
+                      
+                      <p className="text-gray-700 font-medium">{item.description || 'Sans description'}</p>
+                      
+                      {/* Alert si différence de montant détectée */}
+                      {hasDiff && (
+                        <p className="text-xs text-red-500 font-bold mt-1">
+                          Différence détectée : payé {statusInfo.paid_amount.toFixed(2)}€ au lieu de {item.amount.toFixed(2)}€
+                        </p>
                       )}
-                      <span className="bg-primary-100 text-primary-700 px-2 py-1 rounded">
-                        {item.frequency} - Jour {item.day_of_month}
-                      </span>
+
+                      <div className="flex flex-wrap gap-2 mt-2 text-sm text-gray-600">
+                        <span className="bg-gray-100 px-2 py-1 rounded">
+                          {getCategoryName(item.category_id)}
+                        </span>
+                        {item.subcategory_id && (
+                          <span className="bg-gray-100 px-2 py-1 rounded">
+                            {getSubcategoryName(item.subcategory_id)}
+                          </span>
+                        )}
+                        <span className="bg-primary-100 text-primary-700 px-2 py-1 rounded">
+                          {item.frequency} - Jour {item.day_of_month}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex space-x-2 ml-4">
+                      <button
+                        onClick={() => startEdit(item)}
+                        className="text-gray-400 hover:text-primary-600"
+                        title="Modifier"
+                      >
+                        <Edit2 className="h-5 w-5" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        className="text-gray-400 hover:text-red-600"
+                        title="Supprimer"
+                      >
+                        <Trash2 className="h-5 w-5" />
+                      </button>
                     </div>
                   </div>
-                  <div className="flex space-x-2 ml-4">
-                    <button
-                      onClick={() => startEdit(item)}
-                      className="text-primary-600 hover:text-primary-800"
-                    >
-                      <Edit2 className="h-5 w-5" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="text-red-600 hover:text-red-800"
-                    >
-                      <Trash2 className="h-5 w-5" />
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))
+                )}
+              </div>
+            );
+          })
         )}
       </div>
     </div>

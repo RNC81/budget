@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -13,6 +13,11 @@ import pdfplumber
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 
+# --- NOUVEAUX IMPORTS POUR LE RATE LIMITING (SÉCURITÉ) ---
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
 # --- IMPORTS POUR SENDGRID ---
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
@@ -24,6 +29,9 @@ import base64
 # --- FIN DES NOUVEAUX IMPORTS ---
 
 # --- Configuration de la Sécurité ---
+
+# Initialisation du Limiter (identifie par adresse IP)
+limiter = Limiter(key_func=get_remote_address)
 
 # Contexte de hachage pour les mots de passe
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -47,6 +55,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 # --- Initialisation de FastAPI ---
 app = FastAPI()
+
+# Configuration du Rate Limiter dans l'état de l'application
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- CORRECTION DU BUG DE CONNEXION (CORS) ---
 origins = [
@@ -75,6 +87,16 @@ subcategories_collection = db.subcategories
 recurring_transactions_collection = db.recurring_transactions
 budgets_collection = db.budgets
 savings_goals_collection = db.savings_goals
+
+# --- NOUVEAUTÉ : INITIALISATION DES INDEX (PERFORMANCE) ---
+@app.on_event("startup")
+async def startup_db_client():
+    """Crée les index nécessaires au démarrage pour garantir les performances."""
+    await transactions_collection.create_index([("user_id", 1), ("date", -1)])
+    await categories_collection.create_index([("user_id", 1)])
+    await budgets_collection.create_index([("user_id", 1), ("category_id", 1)], unique=True)
+    await savings_goals_collection.create_index([("user_id", 1)])
+    print("Index MongoDB synchronisés.")
 
 # --- Modèles Pydantic ---
 
@@ -368,7 +390,7 @@ def send_verification_email(email: str, token: str):
     sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
 
     if not all([frontend_url, sender_email, sendgrid_api_key]):
-        print("ERREUR: Variables d'environnement manquantes pour l'envoi d'e-mail")
+        print("ERREUR: Variables SendGrid manquantes")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
 
     verification_link = f"{frontend_url}/verify-email?token={token}"
@@ -488,10 +510,51 @@ async def initialize_default_categories(user_id: str):
                 "type": cat["type"], "created_at": datetime.now(timezone.utc)
             })
 
-# --- Routes d'Authentification ---
+# --- FONCTION SMART RECURRING (AMÉLIORÉE) ---
+async def internal_generate_recurring(user_id: str):
+    """Fonction interne pour générer les abonnements sans API. Utilisée au Login."""
+    now = datetime.now(timezone.utc)
+    current_month, current_year, current_day = now.month, now.year, now.day
+    
+    recurring_list = await recurring_transactions_collection.find({"user_id": user_id}).to_list(None)
+    generated_count = 0
+    
+    for recurring in recurring_list:
+        # On vérifie si on est au jour ou après le jour de l'abonnement
+        if recurring["frequency"] == "Mensuel" and current_day >= recurring["day_of_month"]:
+            
+            # LOGIQUE SMART : On cherche si une transaction similaire existe déjà ce mois-ci
+            # Similaire = Même catégorie ET (Montant proche OU Description qui se ressemble)
+            start_of_month = datetime(current_year, current_month, 1, tzinfo=timezone.utc)
+            
+            # Recherche souple dans MongoDB
+            existing = await transactions_collection.find_one({
+                "user_id": user_id,
+                "category_id": recurring.get("category_id"),
+                "date": {"$gte": start_of_month},
+                "$or": [
+                    {"description": {"$regex": recurring.get("description", ""), "$options": "i"}},
+                    {"amount": {"$gte": recurring["amount"] * 0.8, "$lte": recurring["amount"] * 1.2}}
+                ]
+            })
+            
+            if not existing:
+                transaction_id = str(uuid.uuid4())
+                transaction_date = datetime(current_year, current_month, recurring["day_of_month"], tzinfo=timezone.utc)
+                await transactions_collection.insert_one({
+                    "id": transaction_id, "user_id": user_id, "date": transaction_date,
+                    "amount": recurring["amount"], "type": recurring["type"],
+                    "description": recurring.get("description"), "category_id": recurring.get("category_id"),
+                    "subcategory_id": recurring.get("subcategory_id"), "created_at": datetime.now(timezone.utc)
+                })
+                generated_count += 1
+    return generated_count
+
+# --- Routes d'Authentification (Avec Rate Limiting) ---
 
 @app.post("/api/auth/register", response_model=UserPublic)
-async def register_user(user: UserCreate):
+@limiter.limit("3/minute")
+async def register_user(request: Request, user: UserCreate):
     existing_user = await get_user(user.email)
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -531,7 +594,8 @@ async def register_user(user: UserCreate):
     return UserPublic(**new_user_data)
 
 @app.post("/api/auth/token", response_model=TokenResponse) 
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit("5/minute")
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     user = await get_user(form_data.username)
     
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -547,6 +611,10 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             detail="Email not verified.",
         )
     
+    # AUTOMATISATION : Déclenchement de la génération des abonnements à la connexion
+    if not user.mfa_enabled:
+        await internal_generate_recurring(user.id)
+
     if user.mfa_enabled:
         mfa_token = create_mfa_token(user.email)
         return TokenResponse(mfa_required=True, mfa_token=mfa_token)
@@ -559,7 +627,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         return TokenResponse(access_token=access_token, token_type="bearer", mfa_required=False)
 
 @app.post("/api/auth/mfa-login", response_model=Token)
-async def mfa_login(mfa_data: MfaLoginRequest):
+@limiter.limit("5/minute")
+async def mfa_login(request: Request, mfa_data: MfaLoginRequest):
     email = await get_email_from_mfa_token(mfa_data.mfa_token)
     user = await get_user(email)
     if not user or not user.mfa_enabled or not user.mfa_secret:
@@ -568,6 +637,9 @@ async def mfa_login(mfa_data: MfaLoginRequest):
     if not verify_mfa_code(user.mfa_secret, mfa_data.mfa_code):
         raise HTTPException(status_code=401, detail="Invalid MFA code.")
         
+    # AUTOMATISATION : Déclenchement de la génération des abonnements après MFA réussi
+    await internal_generate_recurring(user.id)
+
     access_token = create_access_token(data={"sub": user.email, "scope": "access"})
     return Token(access_token=access_token, token_type="bearer")
 
@@ -581,7 +653,8 @@ async def verify_email_route(token: str):
     return {"message": "Email verified successfully."}
 
 @app.post("/api/auth/forgot-password")
-async def forgot_password(data: ForgotPasswordRequest):
+@limiter.limit("3/minute")
+async def forgot_password(request: Request, data: ForgotPasswordRequest):
     user = await get_user(data.email)
     if user:
         try:
@@ -733,7 +806,7 @@ async def delete_subcategory(subcategory_id: str, current_user: UserInDB = Depen
     await subcategories_collection.delete_one({"id": subcategory_id, "user_id": current_user.id})
     return {"message": "SubCategory deleted successfully"}
 
-# --- CORRECTION MAJEURE : Transactions (Bug de Fausse Erreur) ---
+# --- Transactions ---
 
 @app.get("/api/transactions")
 async def get_transactions(
@@ -778,7 +851,6 @@ async def update_transaction(transaction_id: str, transaction: TransactionUpdate
     if update_data:
         await transactions_collection.update_one({"id": transaction_id, "user_id": current_user.id}, {"$set": update_data})
     
-    # --- FIX : Nettoyage manuel du retour pour éviter l'erreur de sérialisation ObjectId ---
     updated = await transactions_collection.find_one({"id": transaction_id, "user_id": current_user.id})
     if updated:
         updated.pop("_id", None)
@@ -810,19 +882,18 @@ async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- NOUVEAUTÉ : ANALYSE PDF (Idée 5) ---
+# --- ANALYSE PDF ---
 
 @app.post("/api/transactions/parse-pdf")
-async def parse_pdf_transactions(file: UploadFile = File(...), current_user: UserInDB = Depends(get_current_user)):
+@limiter.limit("2/minute")
+async def parse_pdf_transactions(request: Request, file: UploadFile = File(...), current_user: UserInDB = Depends(get_current_user)):
     """Analyse un relevé bancaire PDF pour en extraire les transactions potentielles."""
     try:
         contents = await file.read()
         pdf_file = io.BytesIO(contents)
         extracted_transactions = []
         
-        # Regex pour détecter les dates françaises JJ/MM/AAAA ou JJ/MM/AA ou JJ/MM
         date_pattern = r'(\d{2}/\d{2}(?:/\d{2,4})?)'
-        # Regex pour les montants (ex: 123,45 ou 1 234,56 ou -12,00)
         amount_pattern = r'(-?\d+(?:\s?\d+)*(?:[.,]\d{2}))'
 
         with pdfplumber.open(pdf_file) as pdf:
@@ -832,18 +903,13 @@ async def parse_pdf_transactions(file: UploadFile = File(...), current_user: Use
                 
                 lines = text.split('\n')
                 for line in lines:
-                    # On cherche une date dans la ligne
                     date_match = re.search(date_pattern, line)
                     if not date_match: continue
-                    
-                    # On cherche un montant dans la ligne
                     amount_matches = re.findall(amount_pattern, line)
                     if not amount_matches: continue
                     
-                    # Extraction de la date
                     raw_date = date_match.group(1)
                     try:
-                        # On essaie d'ajouter l'année si elle manque (JJ/MM)
                         if len(raw_date) <= 5:
                             parsed_date = datetime.strptime(f"{raw_date}/{datetime.now().year}", "%d/%m/%Y")
                         elif len(raw_date) <= 8:
@@ -853,16 +919,9 @@ async def parse_pdf_transactions(file: UploadFile = File(...), current_user: Use
                         parsed_date = parsed_date.replace(tzinfo=timezone.utc)
                     except: continue
 
-                    # On tente de récupérer le montant. Souvent sur un relevé, 
-                    # le dernier montant de la ligne est le solde, l'avant-dernier est l'opération.
-                    # Cette logique est heuristique et pourra être affinée.
                     raw_amount = amount_matches[-1].replace(' ', '').replace(',', '.')
                     amount = float(raw_amount)
-                    
-                    # Type basé sur le signe (positif=revenu, négatif=dépense)
                     t_type = "Revenu" if amount > 0 else "Dépense"
-                    
-                    # Description : tout ce qui n'est pas la date ou le montant
                     description = line.replace(raw_date, '').replace(amount_matches[-1], '').strip()
                     
                     extracted_transactions.append({
@@ -879,9 +938,8 @@ async def parse_pdf_transactions(file: UploadFile = File(...), current_user: Use
         print(f"Erreur lors de l'analyse PDF : {e}")
         raise HTTPException(status_code=500, detail=f"Échec de l'analyse du PDF : {str(e)}")
 
-# --- FIN NOUVEAUTÉ PDF ---
+# --- Recurring Transactions ---
 
-# Recurring Transactions
 @app.get("/api/recurring-transactions")
 async def get_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
     recurring = await recurring_transactions_collection.find({"user_id": current_user.id}).to_list(None)
@@ -916,32 +974,18 @@ async def update_recurring_transaction(recurring_id: str, recurring: RecurringTr
     if updated: updated.pop("_id", None)
     return updated
 
+@app.delete("/api/recurring-transactions/{recurring_id}")
+async def delete_recurring_transaction(recurring_id: str, current_user: UserInDB = Depends(get_current_user)):
+    existing = await recurring_transactions_collection.find_one({"id": recurring_id, "user_id": current_user.id})
+    if not existing: raise HTTPException(status_code=404, detail="Not found")
+    await recurring_transactions_collection.delete_one({"id": recurring_id, "user_id": current_user.id})
+    return {"message": "Recurring transaction deleted successfully"}
+
 @app.post("/api/recurring-transactions/generate")
 async def generate_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
-    now = datetime.now(timezone.utc)
-    current_month, current_year, current_day = now.month, now.year, now.day
-    recurring_list = await recurring_transactions_collection.find({"user_id": current_user.id}).to_list(None)
-    generated_count = 0
-    for recurring in recurring_list:
-        if recurring["frequency"] == "Mensuel" and current_day >= recurring["day_of_month"]:
-            existing = await transactions_collection.find_one({
-                "user_id": current_user.id, "description": recurring.get("description"),
-                "amount": recurring["amount"], "type": recurring["type"],
-                "date": {
-                    "$gte": datetime(current_year, current_month, 1, tzinfo=timezone.utc),
-                    "$lt": datetime(current_year, current_month + 1 if current_month < 12 else 1, 1, tzinfo=timezone.utc)
-                }
-            })
-            if not existing:
-                await transactions_collection.insert_one({
-                    "id": str(uuid.uuid4()), "user_id": current_user.id, 
-                    "date": datetime(current_year, current_month, recurring["day_of_month"], tzinfo=timezone.utc),
-                    "amount": recurring["amount"], "type": recurring["type"],
-                    "description": recurring.get("description"), "category_id": recurring.get("category_id"),
-                    "subcategory_id": recurring.get("subcategory_id"), "created_at": datetime.now(timezone.utc)
-                })
-                generated_count += 1
-    return {"message": f"{generated_count} transactions generated", "count": generated_count}
+    """Route API manuelle pour générer les abonnements (L'utilisateur peut toujours cliquer)."""
+    count = await internal_generate_recurring(current_user.id)
+    return {"message": f"{count} transactions générées", "count": count}
 
 # --- Budgets ---
 
