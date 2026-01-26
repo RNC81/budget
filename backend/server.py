@@ -1,15 +1,17 @@
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime, timezone, timedelta
 import os
 import uuid
 import re
 import io
 import pdfplumber
+import json
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 
@@ -27,6 +29,28 @@ import pyotp
 import qrcode
 import base64
 # --- FIN DES NOUVEAUX IMPORTS ---
+
+# ==============================================================================
+# CORRECTIF SÉRIALISATION JSON (POUR STOPPER LE BUG DE FAUSSE ERREUR ROUGE)
+# ==============================================================================
+def json_serial(obj):
+    """Handler pour les types non sérialisables par défaut."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    raise TypeError(f"Type {type(obj)} non sérialisable")
+
+class UnifiedJSONResponse(JSONResponse):
+    def render(self, content: Any) -> bytes:
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+            default=json_serial,
+        ).encode("utf-8")
 
 # --- Configuration de la Sécurité ---
 
@@ -54,7 +78,8 @@ PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 15
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 # --- Initialisation de FastAPI ---
-app = FastAPI()
+# On injecte ici notre UnifiedJSONResponse pour tout le serveur
+app = FastAPI(default_response_class=UnifiedJSONResponse)
 
 # Configuration du Rate Limiter dans l'état de l'application
 app.state.limiter = limiter
