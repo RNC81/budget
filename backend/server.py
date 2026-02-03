@@ -24,8 +24,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 # --- IMPORTS POUR SENDGRID ---
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+import resend
 
 # --- NOUVEAUX IMPORTS POUR MFA (TOTP) ---
 import pyotp
@@ -418,82 +417,90 @@ def generate_qr_code_data_uri(email: str, secret_key: str) -> str:
     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return f"data:image/png;base64,{img_str}"
 
-# --- Fonctions d'envoi d'e-mail ---
+# --- Fonctions d'envoi d'e-mail (MIGRATION RESEND) ---
 def send_verification_email(email: str, token: str):
     frontend_url = os.getenv("FRONTEND_URL")
     sender_email = os.getenv("SENDER_EMAIL")
-    sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+    # On utilise maintenant RESEND_API_KEY
+    resend_api_key = os.getenv("RESEND_API_KEY")
 
-    # --- DEBUGGING CRITIQUE POUR L'ENVOI DE MAIL ---
-    if not all([frontend_url, sender_email, sendgrid_api_key]):
-        logger.error(f"CONFIG MAIL MANQUANTE : FRONTEND_URL={bool(frontend_url)}, SENDER_EMAIL={bool(sender_email)}, KEY={bool(sendgrid_api_key)}")
+    if not all([frontend_url, sender_email, resend_api_key]):
+        logger.error("CONFIG RESEND MANQUANTE : Vérifiez FRONTEND_URL, SENDER_EMAIL, RESEND_API_KEY")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
+
+    # Configuration de la clé API Resend
+    resend.api_key = resend_api_key
 
     verification_link = f"{frontend_url}/verify-email?token={token}"
     
-    message = Mail(
-        from_email=sender_email,
-        to_emails=email,
-        subject='Budget Tracker - Vérifiez votre adresse e-mail',
-        html_content=f"""
-            <div style="font-family: Arial, sans-serif; line-height: 1.6; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-                <h2 style="color: #333;">Bienvenue sur Budget Tracker !</h2>
-                <p>Merci de vous être inscrit. Pour finaliser la création de votre compte, veuillez cliquer sur le bouton ci-dessous :</p>
-                <p style="text-align: center; margin: 25px 0;">
-                    <a href="{verification_link}" 
-                        style="background-color: #0d6efd; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
-                        Vérifier mon compte
-                    </a>
-                </p>
-                <p>Ce lien est valide pendant 24 heures.</p>
-                <p style="font-size: 0.9em; color: #777;">Si vous n'avez pas créé ce compte, vous pouvez ignorer cet e-mail en toute sécurité.</p>
-            </div>
-        """
-    )
+    html_content = f"""
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+            <h2 style="color: #333;">Bienvenue sur Budget Tracker !</h2>
+            <p>Merci de vous être inscrit. Pour finaliser la création de votre compte, veuillez cliquer sur le bouton ci-dessous :</p>
+            <p style="text-align: center; margin: 25px 0;">
+                <a href="{verification_link}" 
+                    style="background-color: #0d6efd; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                    Vérifier mon compte
+                </a>
+            </p>
+            <p>Ce lien est valide pendant 24 heures.</p>
+            <p style="font-size: 0.9em; color: #777;">Si vous n'avez pas créé ce compte, vous pouvez ignorer cet e-mail en toute sécurité.</p>
+        </div>
+    """
+
+    params = {
+        "from": f"Budget Tracker <{sender_email}>",
+        "to": [email],
+        "subject": "Budget Tracker - Vérifiez votre adresse e-mail",
+        "html": html_content,
+    }
+
     try:
-        sg = SendGridAPIClient(sendgrid_api_key)
-        response = sg.send(message)
-        logger.info(f"Email envoyé à {email}. Status: {response.status_code}")
+        response = resend.Emails.send(params)
+        logger.info(f"Email Resend envoyé à {email}. Response: {response}")
+        return response
     except Exception as e:
-        logger.error(f"Erreur SendGrid: {str(e)}")
-        if hasattr(e, 'body'):
-            logger.error(f"SendGrid Error Body: {e.body}")
+        logger.error(f"Erreur Resend lors de l'envoi de l'e-mail: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to send verification email.")
 
 def send_password_reset_email(email: str, token: str):
     frontend_url = os.getenv("FRONTEND_URL")
     sender_email = os.getenv("SENDER_EMAIL")
-    sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+    resend_api_key = os.getenv("RESEND_API_KEY")
 
-    if not all([frontend_url, sender_email, sendgrid_api_key]):
-        logger.error("Variables SendGrid manquantes pour Reset Password")
+    if not all([frontend_url, sender_email, resend_api_key]):
+        logger.error("Variables Resend manquantes pour Reset Password")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
 
+    resend.api_key = resend_api_key
     reset_link = f"{frontend_url}/reset-password?token={token}"
     
-    message = Mail(
-        from_email=sender_email,
-        to_emails=email,
-        subject='Budget Tracker - Réinitialisation de votre mot de passe',
-        html_content=f"""
-            <div style="font-family: Arial, sans-serif; line-height: 1.6; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-                <h2 style="color: #333;">Réinitialisation de mot de passe</h2>
-                <p>Vous avez demandé à réinitialiser votre mot de passe pour Budget Tracker. Cliquez sur le bouton ci-dessous pour continuer :</p>
-                <p style="text-align: center; margin: 25px 0;">
-                    <a href="{reset_link}" style="background-color: #dc3545; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
-                        Réinitialiser mon mot de passe
-                    </a>
-                </p>
-                <p>Ce lien est valide pendant {PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} minutes.</p>
-                <p style="font-size: 0.9em; color: #777;">Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail.</p>
-            </div>
-        """
-    )
+    html_content = f"""
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+            <h2 style="color: #333;">Réinitialisation de mot de passe</h2>
+            <p>Vous avez demandé à réinitialiser votre mot de passe pour Budget Tracker. Cliquez sur le bouton ci-dessous pour continuer :</p>
+            <p style="text-align: center; margin: 25px 0;">
+                <a href="{reset_link}" style="background-color: #dc3545; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                    Réinitialiser mon mot de passe
+                </a>
+            </p>
+            <p>Ce lien est valide pendant {PASSWORD_RESET_TOKEN_EXPIRE_MINUTES} minutes.</p>
+            <p style="font-size: 0.9em; color: #777;">Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail.</p>
+        </div>
+    """
+
+    params = {
+        "from": f"Budget Tracker <{sender_email}>",
+        "to": [email],
+        "subject": "Budget Tracker - Réinitialisation de votre mot de passe",
+        "html": html_content,
+    }
+
     try:
-        sg = SendGridAPIClient(sendgrid_api_key)
-        sg.send(message)
+        response = resend.Emails.send(params)
+        logger.info(f"Email Reset Resend envoyé à {email}. Response: {response}")
     except Exception as e:
-        logger.error(f"Erreur critique reset password email: {e}")
+        logger.error(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
         raise HTTPException(status_code=500, detail="Failed to send password reset email.")
 
 # --- Fonctions de l'Utilisateur ---

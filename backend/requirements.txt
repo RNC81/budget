@@ -58,9 +58,9 @@ pytz==2025.2
 qrcode==7.4.2
 requests==2.32.5
 requests-oauthlib==2.0.0
+resend==2.1.0
 rich==14.2.0
 rsa==4.9.1
-sendgrid==6.10.0
 s3transfer==0.14.0
 s5cmd==0.2.0
 shellingham==1.5.4
