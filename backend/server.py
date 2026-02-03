@@ -1,3 +1,4 @@
+FILE: backend/server.py
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -5,18 +6,19 @@ from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Any
-# CORRECTION IMPORT: Ajout de 'date' pour éviter le crash du json_serial
+# CORRECTION IMPORT: 'date' est nécessaire pour éviter le crash json_serial
 from datetime import datetime, timezone, timedelta, date
 import os
 import uuid
 import re
 import io
-import logging
 import pdfplumber
 import json
+import logging
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from bson import ObjectId # Pour gérer les IDs MongoDB natifs si besoin
+# Ajout pour gérer les ObjectId si nécessaire
+from bson import ObjectId
 
 # --- NOUVEAUX IMPORTS POUR LE RATE LIMITING (SÉCURITÉ) ---
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -98,7 +100,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 origins = [
     "https://budget-1-fbg6.onrender.com",
     "http://localhost:3000",
-    os.getenv("FRONTEND_URL", "http://localhost:3000") # Ajout sécurité
+    # Ajout dynamique de l'URL frontend si définie dans les env
+    os.getenv("FRONTEND_URL", "http://localhost:3000")
 ]
 
 app.add_middleware(
@@ -109,7 +112,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Connexion MongoDB
+# Connexion MongoDB - RETOUR A LA VERSION ORIGINALE QUI MARCHAIT
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/budget_tracker")
 client = AsyncIOMotorClient(MONGO_URL)
 db = client.budget_tracker
@@ -127,11 +130,14 @@ savings_goals_collection = db.savings_goals
 @app.on_event("startup")
 async def startup_db_client():
     """Crée les index nécessaires au démarrage pour garantir les performances."""
-    await transactions_collection.create_index([("user_id", 1), ("date", -1)])
-    await categories_collection.create_index([("user_id", 1)])
-    await budgets_collection.create_index([("user_id", 1), ("category_id", 1)], unique=True)
-    await savings_goals_collection.create_index([("user_id", 1)])
-    print("Index MongoDB synchronisés.")
+    try:
+        await transactions_collection.create_index([("user_id", 1), ("date", -1)])
+        await categories_collection.create_index([("user_id", 1)])
+        await budgets_collection.create_index([("user_id", 1), ("category_id", 1)], unique=True)
+        await savings_goals_collection.create_index([("user_id", 1)])
+        print("Index MongoDB synchronisés.")
+    except Exception as e:
+        print(f"Indexation Warning: {e}")
 
 # --- Modèles Pydantic ---
 
@@ -424,8 +430,13 @@ def send_verification_email(email: str, token: str):
     sender_email = os.getenv("SENDER_EMAIL")
     sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
 
+    # LOGGING POUR DEBUGGER LE PROBLEME DU MAIL
+    if not frontend_url: print("DEBUG: FRONTEND_URL manquant")
+    if not sender_email: print("DEBUG: SENDER_EMAIL manquant")
+    if not sendgrid_api_key: print("DEBUG: SENDGRID_API_KEY manquant")
+
     if not all([frontend_url, sender_email, sendgrid_api_key]):
-        logger.error("ERREUR CRITIQUE: Variables SendGrid manquantes. Vérifiez FRONTEND_URL, SENDER_EMAIL, SENDGRID_API_KEY")
+        print("ERREUR: Variables SendGrid manquantes")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
 
     verification_link = f"{frontend_url}/verify-email?token={token}"
@@ -452,13 +463,13 @@ def send_verification_email(email: str, token: str):
     try:
         sg = SendGridAPIClient(sendgrid_api_key)
         response = sg.send(message)
-        logger.info(f"Email de vérification envoyé à {email}. Status: {response.status_code}")
+        print(f"SendGrid status: {response.status_code}") # Log le succès
     except Exception as e:
-        logger.error(f"Erreur critique lors de l'envoi de l'e-mail SendGrid: {str(e)}")
-        # Si possible, on log le body de l'erreur pour le debug
+        print(f"Erreur critique lors de l'envoi de l'e-mail: {e}")
+        # Si c'est une erreur HTTP spécifique SendGrid, on essaie de voir le body
         if hasattr(e, 'body'):
-            logger.error(f"Détail erreur SendGrid: {e.body}")
-        raise HTTPException(status_code=500, detail=f"Failed to send verification email. Provider Error.")
+            print(f"SendGrid Error Body: {e.body}")
+        raise HTTPException(status_code=500, detail="Failed to send verification email.")
 
 def send_password_reset_email(email: str, token: str):
     frontend_url = os.getenv("FRONTEND_URL")
@@ -466,7 +477,7 @@ def send_password_reset_email(email: str, token: str):
     sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
 
     if not all([frontend_url, sender_email, sendgrid_api_key]):
-        logger.error("ERREUR: Variables d'environnement SendGrid manquantes pour Reset Password")
+        print("ERREUR: Variables d'environnement SendGrid manquantes")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
 
     reset_link = f"{frontend_url}/reset-password?token={token}"
@@ -491,12 +502,9 @@ def send_password_reset_email(email: str, token: str):
     )
     try:
         sg = SendGridAPIClient(sendgrid_api_key)
-        response = sg.send(message)
-        logger.info(f"Email reset envoyé à {email}. Status: {response.status_code}")
+        sg.send(message)
     except Exception as e:
-        logger.error(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
-        if hasattr(e, 'body'):
-            logger.error(f"Détail erreur SendGrid: {e.body}")
+        print(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
         raise HTTPException(status_code=500, detail="Failed to send password reset email.")
 
 # --- Fonctions de l'Utilisateur ---
@@ -631,7 +639,7 @@ async def register_user(request: Request, user: UserCreate):
         except HTTPException as he:
             raise he
         except Exception as e:
-            logger.error(f"Echec envoi e-mail non géré: {e}")
+            print(f"Echec envoi e-mail non géré: {e}")
             raise HTTPException(status_code=500, detail="Impossible d'envoyer l'e-mail de vérification.")
         
         await users_collection.insert_one(new_user_data)
@@ -707,7 +715,7 @@ async def forgot_password(request: Request, data: ForgotPasswordRequest):
             password_reset_token = create_password_reset_token(user.email)
             send_password_reset_email(user.email, password_reset_token)
         except Exception as e:
-            logger.error(f"Error sending forgot password email: {e}")
+            print(f"Error sending forgot password email: {e}")
     return {"message": "If an account exists, a reset link has been sent."}
 
 @app.post("/api/auth/reset-password")
@@ -982,7 +990,7 @@ async def parse_pdf_transactions(request: Request, file: UploadFile = File(...),
 
         return extracted_transactions
     except Exception as e:
-        logger.error(f"Erreur lors de l'analyse PDF : {e}")
+        print(f"Erreur lors de l'analyse PDF : {e}")
         raise HTTPException(status_code=500, detail=f"Échec de l'analyse du PDF : {str(e)}")
 
 # --- Recurring Transactions ---
