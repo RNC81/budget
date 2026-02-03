@@ -1,3 +1,4 @@
+FILE: backend/server.py
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -5,15 +6,18 @@ from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Any
-from datetime import datetime, timezone, timedelta
+# CORRECTION IMPORT: Ajout de 'date' pour éviter le crash du json_serial
+from datetime import datetime, timezone, timedelta, date
 import os
 import uuid
 import re
 import io
+import logging
 import pdfplumber
 import json
 from passlib.context import CryptContext
 from jose import JWTError, jwt
+from bson import ObjectId # Pour gérer les IDs MongoDB natifs si besoin
 
 # --- NOUVEAUX IMPORTS POUR LE RATE LIMITING (SÉCURITÉ) ---
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -30,6 +34,10 @@ import qrcode
 import base64
 # --- FIN DES NOUVEAUX IMPORTS ---
 
+# Configuration Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # ==============================================================================
 # CORRECTIF SÉRIALISATION JSON (POUR STOPPER LE BUG DE FAUSSE ERREUR ROUGE)
 # ==============================================================================
@@ -38,6 +46,8 @@ def json_serial(obj):
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     if isinstance(obj, uuid.UUID):
+        return str(obj)
+    if isinstance(obj, ObjectId):
         return str(obj)
     raise TypeError(f"Type {type(obj)} non sérialisable")
 
@@ -88,7 +98,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # --- CORRECTION DU BUG DE CONNEXION (CORS) ---
 origins = [
     "https://budget-1-fbg6.onrender.com",
-    "http://localhost:3000"
+    "http://localhost:3000",
+    os.getenv("FRONTEND_URL", "http://localhost:3000") # Ajout sécurité
 ]
 
 app.add_middleware(
@@ -415,7 +426,7 @@ def send_verification_email(email: str, token: str):
     sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
 
     if not all([frontend_url, sender_email, sendgrid_api_key]):
-        print("ERREUR: Variables SendGrid manquantes")
+        logger.error("ERREUR CRITIQUE: Variables SendGrid manquantes. Vérifiez FRONTEND_URL, SENDER_EMAIL, SENDGRID_API_KEY")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
 
     verification_link = f"{frontend_url}/verify-email?token={token}"
@@ -441,10 +452,14 @@ def send_verification_email(email: str, token: str):
     )
     try:
         sg = SendGridAPIClient(sendgrid_api_key)
-        sg.send(message) 
+        response = sg.send(message)
+        logger.info(f"Email de vérification envoyé à {email}. Status: {response.status_code}")
     except Exception as e:
-        print(f"Erreur critique lors de l'envoi de l'e-mail: {e}")
-        raise HTTPException(status_code=500, detail="Failed to send verification email.")
+        logger.error(f"Erreur critique lors de l'envoi de l'e-mail SendGrid: {str(e)}")
+        # Si possible, on log le body de l'erreur pour le debug
+        if hasattr(e, 'body'):
+            logger.error(f"Détail erreur SendGrid: {e.body}")
+        raise HTTPException(status_code=500, detail=f"Failed to send verification email. Provider Error.")
 
 def send_password_reset_email(email: str, token: str):
     frontend_url = os.getenv("FRONTEND_URL")
@@ -452,7 +467,7 @@ def send_password_reset_email(email: str, token: str):
     sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
 
     if not all([frontend_url, sender_email, sendgrid_api_key]):
-        print("ERREUR: Variables d'environnement SendGrid manquantes")
+        logger.error("ERREUR: Variables d'environnement SendGrid manquantes pour Reset Password")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
 
     reset_link = f"{frontend_url}/reset-password?token={token}"
@@ -477,9 +492,12 @@ def send_password_reset_email(email: str, token: str):
     )
     try:
         sg = SendGridAPIClient(sendgrid_api_key)
-        sg.send(message)
+        response = sg.send(message)
+        logger.info(f"Email reset envoyé à {email}. Status: {response.status_code}")
     except Exception as e:
-        print(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
+        logger.error(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
+        if hasattr(e, 'body'):
+            logger.error(f"Détail erreur SendGrid: {e.body}")
         raise HTTPException(status_code=500, detail="Failed to send password reset email.")
 
 # --- Fonctions de l'Utilisateur ---
@@ -489,6 +507,8 @@ async def get_user(email: str) -> Optional[UserInDB]:
     if user:
         if "currency" not in user:
             user["currency"] = "EUR"
+        # S'assurer que _id est converti en str pour le modèle Pydantic
+        user["id"] = str(user["_id"])
         return UserInDB(**user)
     return None
 
@@ -609,8 +629,10 @@ async def register_user(request: Request, user: UserCreate):
         try:
             verification_token = create_verification_token(user.email)
             send_verification_email(user.email, verification_token) 
+        except HTTPException as he:
+            raise he
         except Exception as e:
-            print(f"Echec envoi e-mail: {e}")
+            logger.error(f"Echec envoi e-mail non géré: {e}")
             raise HTTPException(status_code=500, detail="Impossible d'envoyer l'e-mail de vérification.")
         
         await users_collection.insert_one(new_user_data)
@@ -685,7 +707,8 @@ async def forgot_password(request: Request, data: ForgotPasswordRequest):
         try:
             password_reset_token = create_password_reset_token(user.email)
             send_password_reset_email(user.email, password_reset_token)
-        except: pass
+        except Exception as e:
+            logger.error(f"Error sending forgot password email: {e}")
     return {"message": "If an account exists, a reset link has been sent."}
 
 @app.post("/api/auth/reset-password")
@@ -960,7 +983,7 @@ async def parse_pdf_transactions(request: Request, file: UploadFile = File(...),
 
         return extracted_transactions
     except Exception as e:
-        print(f"Erreur lors de l'analyse PDF : {e}")
+        logger.error(f"Erreur lors de l'analyse PDF : {e}")
         raise HTTPException(status_code=500, detail=f"Échec de l'analyse du PDF : {str(e)}")
 
 # --- Recurring Transactions ---
