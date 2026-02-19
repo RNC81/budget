@@ -1,4 +1,3 @@
-FILE: frontend/src/components/settings/ApiTab.js
 import React, { useState, useEffect } from 'react';
 import api from '../../api';
 import { Key, AlertTriangle, Copy, CheckCircle, Trash2, Smartphone } from 'lucide-react';
