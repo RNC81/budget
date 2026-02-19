@@ -26,6 +26,9 @@ from slowapi.errors import RateLimitExceeded
 # --- IMPORTS POUR SENDGRID / RESEND ---
 import resend
 
+# --- IMPORTS POUR GEMINI (PDF PARSING IA) ---
+import google.generativeai as genai
+
 # --- NOUVEAUX IMPORTS POUR MFA (TOTP) ---
 import pyotp
 import qrcode
@@ -37,7 +40,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# CORRECTIF SÉRIALISATION JSON (POUR STOPPER LE BUG DE FAUSSE ERREUR ROUGE)
+# CONFIGURATION GEMINI API
+# ==============================================================================
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+else:
+    logger.warning("ATTENTION: GEMINI_API_KEY non configurée. L'import PDF plantera.")
+
+# ==============================================================================
+# CORRECTIF SÉRIALISATION JSON
 # ==============================================================================
 def json_serial(obj):
     """Handler pour les types non sérialisables par défaut."""
@@ -90,15 +102,15 @@ bearer_scheme = HTTPBearer(auto_error=False)
 # --- Initialisation de FastAPI ---
 app = FastAPI(default_response_class=UnifiedJSONResponse)
 
-# Configuration du Rate Limiter dans l'état de l'application
+# Configuration du Rate Limiter
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- CORRECTION DU BUG DE CONNEXION (CORS) ---
+# --- CONFIGURATION CORS ---
 origins = [
     "https://budget-1-fbg6.onrender.com",
     "http://localhost:3000",
-    os.getenv("FRONTEND_URL", "http://localhost:3000") # Ajout sécurité
+    os.getenv("FRONTEND_URL", "http://localhost:3000")
 ]
 
 app.add_middleware(
@@ -109,7 +121,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Connexion MongoDB
+# --- CONNEXION MONGODB ---
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017/budget_tracker")
 client = AsyncIOMotorClient(MONGO_URL)
 db = client.budget_tracker
@@ -122,18 +134,21 @@ subcategories_collection = db.subcategories
 recurring_transactions_collection = db.recurring_transactions
 budgets_collection = db.budgets
 savings_goals_collection = db.savings_goals
-pending_transactions_collection = db.pending_transactions # NOUVELLE COLLECTION
+pending_transactions_collection = db.pending_transactions
 
-# --- NOUVEAUTÉ : INITIALISATION DES INDEX (PERFORMANCE) ---
+# --- INITIALISATION DES INDEX ---
 @app.on_event("startup")
 async def startup_db_client():
-    """Crée les index nécessaires au démarrage pour garantir les performances."""
-    await transactions_collection.create_index([("user_id", 1), ("date", -1)])
-    await categories_collection.create_index([("user_id", 1)])
-    await budgets_collection.create_index([("user_id", 1), ("category_id", 1)], unique=True)
-    await savings_goals_collection.create_index([("user_id", 1)])
-    await pending_transactions_collection.create_index([("user_id", 1)])
-    print("Index MongoDB synchronisés.")
+    """Crée les index nécessaires au démarrage."""
+    try:
+        await transactions_collection.create_index([("user_id", 1), ("date", -1)])
+        await categories_collection.create_index([("user_id", 1)])
+        await budgets_collection.create_index([("user_id", 1), ("category_id", 1)], unique=True)
+        await savings_goals_collection.create_index([("user_id", 1)])
+        await pending_transactions_collection.create_index([("user_id", 1)])
+        logger.info("Index MongoDB synchronisés.")
+    except Exception as e:
+        logger.warning(f"Indexation Warning: {e}")
 
 # --- Modèles Pydantic ---
 
@@ -148,13 +163,13 @@ class UserPublic(BaseModel):
     email: EmailStr
     mfa_enabled: bool = False
     currency: str = "EUR"
-    has_api_key: bool = False # NOUVEAU: Permet au frontend de savoir si une clé existe
+    has_api_key: bool = False
 
 class UserInDB(UserPublic):
     hashed_password: str
     is_verified: Optional[bool] = None
     mfa_secret: Optional[str] = None
-    api_key: Optional[str] = None # NOUVEAU: Stockage du Personal Access Token
+    api_key: Optional[str] = None
 
 class TokenResponse(BaseModel):
     access_token: Optional[str] = None
@@ -532,7 +547,6 @@ async def get_user(email: str) -> Optional[UserInDB]:
     if user:
         if "currency" not in user:
             user["currency"] = "EUR"
-        # NOUVEAU: Informe le client si une clé API existe déjà
         user["has_api_key"] = "api_key" in user and user["api_key"] is not None
         return UserInDB(**user)
     return None
@@ -596,7 +610,6 @@ async def initialize_default_categories(user_id: str):
 
 # --- FONCTION SMART RECURRING (AMÉLIORÉE) ---
 async def internal_generate_recurring(user_id: str):
-    """Fonction interne pour générer les abonnements sans API. Utilisée au Login."""
     now = datetime.now(timezone.utc)
     current_month, current_year, current_day = now.month, now.year, now.day
     
@@ -774,11 +787,10 @@ async def update_user_currency(currency_data: CurrencyUpdateRequest, current_use
     await users_collection.update_one({"id": current_user.id}, {"$set": {"currency": new_currency}})
     return {"message": "Currency updated successfully", "currency": new_currency}
 
-# --- NOUVEAU : GESTION API KEY POUR IPHONE ---
+# --- GESTION API KEY POUR IPHONE ---
 @app.post("/api/users/me/api-key")
 async def generate_api_key(current_user: UserInDB = Depends(get_current_user)):
-    """Génère une clé API statique pour l'utilisateur (utile pour l'intégration Shortcuts)"""
-    new_key = "bt_" + secrets.token_hex(24) # Prefixe 'bt_' pour identifier la clé
+    new_key = "bt_" + secrets.token_hex(24) 
     await users_collection.update_one({"id": current_user.id}, {"$set": {"api_key": new_key}})
     return {
         "api_key": new_key, 
@@ -787,7 +799,6 @@ async def generate_api_key(current_user: UserInDB = Depends(get_current_user)):
 
 @app.delete("/api/users/me/api-key")
 async def revoke_api_key(current_user: UserInDB = Depends(get_current_user)):
-    """Révoque la clé API existante"""
     await users_collection.update_one({"id": current_user.id}, {"$set": {"api_key": None}})
     return {"message": "API key révoquée avec succès."}
 
@@ -827,16 +838,15 @@ async def mfa_disable(mfa_data: MfaDisableRequest, current_user: UserInDB = Depe
 async def health():
     return {"status": "ok"}
 
-# --- NOUVEAU : WEBHOOKS & INBOX (PENDING TRANSACTIONS) ---
+# --- WEBHOOKS & INBOX (PENDING TRANSACTIONS) ---
 
 @app.post("/api/webhooks/apple-pay")
 async def webhook_apple_pay(payload: WebhookPayload, current_user: UserInDB = Depends(get_user_by_api_key)):
-    """Reçoit la transaction depuis iOS Shortcuts via API Key et la met en attente."""
     pending_id = str(uuid.uuid4())
     doc = {
         "id": pending_id,
         "user_id": current_user.id,
-        "amount": abs(payload.amount), # Securité sur le format
+        "amount": abs(payload.amount),
         "merchant": payload.merchant,
         "date": payload.date,
         "created_at": datetime.now(timezone.utc)
@@ -846,7 +856,6 @@ async def webhook_apple_pay(payload: WebhookPayload, current_user: UserInDB = De
 
 @app.get("/api/transactions/pending", response_model=List[PendingTransactionResponse])
 async def get_pending_transactions(current_user: UserInDB = Depends(get_current_user)):
-    """Récupère la liste des transactions en attente de classification (Inbox)"""
     pending = await pending_transactions_collection.find({"user_id": current_user.id}).sort("date", -1).to_list(None)
     return [{
         "id": p["id"],
@@ -858,13 +867,11 @@ async def get_pending_transactions(current_user: UserInDB = Depends(get_current_
 
 @app.post("/api/transactions/pending/{pending_id}/resolve")
 async def resolve_pending_transaction(pending_id: str, payload: ResolvePendingRequest, current_user: UserInDB = Depends(get_current_user)):
-    """Valide une transaction en attente et l'insère dans le vrai registre."""
     pending = await pending_transactions_collection.find_one({"id": pending_id, "user_id": current_user.id})
     if not pending: 
         raise HTTPException(status_code=404, detail="Pending transaction not found")
 
     transaction_id = str(uuid.uuid4())
-    # Par défaut, on utilise le nom du marchand comme description si non fournie
     final_desc = payload.description if payload.description else pending["merchant"]
     
     new_tx = {
@@ -880,14 +887,12 @@ async def resolve_pending_transaction(pending_id: str, payload: ResolvePendingRe
     }
     
     await transactions_collection.insert_one(new_tx)
-    # Suppression de la file d'attente
     await pending_transactions_collection.delete_one({"id": pending_id})
     
     return {"message": "Pending transaction resolved and inserted.", "transaction_id": transaction_id}
 
 @app.delete("/api/transactions/pending/{pending_id}")
 async def delete_pending_transaction(pending_id: str, current_user: UserInDB = Depends(get_current_user)):
-    """Supprime une transaction en attente (rejet de la part de l'utilisateur)"""
     res = await pending_transactions_collection.delete_one({"id": pending_id, "user_id": current_user.id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Pending transaction not found")
@@ -1045,58 +1050,94 @@ async def create_bulk_transactions(data: TransactionBulk, current_user: UserInDB
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- ANALYSE PDF ---
+# --- ANALYSE PDF PAR LLM GEMINI ---
 
 @app.post("/api/transactions/parse-pdf")
 @limiter.limit("2/minute")
 async def parse_pdf_transactions(request: Request, file: UploadFile = File(...), current_user: UserInDB = Depends(get_current_user)):
-    """Analyse un relevé bancaire PDF pour en extraire les transactions potentielles."""
+    """Analyse un relevé bancaire PDF via Google Gemini pour en extraire les transactions."""
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="L'analyse IA (Gemini) n'est pas configurée sur le serveur.")
+
     try:
         contents = await file.read()
         pdf_file = io.BytesIO(contents)
-        extracted_transactions = []
-        
-        date_pattern = r'(\d{2}/\d{2}(?:/\d{2,4})?)'
-        amount_pattern = r'(-?\d+(?:\s?\d+)*(?:[.,]\d{2}))'
+        raw_text = ""
 
+        # Extraction brutale du texte sans chercher de format
         with pdfplumber.open(pdf_file) as pdf:
             for page in pdf.pages:
                 text = page.extract_text()
-                if not text: continue
-                
-                lines = text.split('\n')
-                for line in lines:
-                    date_match = re.search(date_pattern, line)
-                    if not date_match: continue
-                    amount_matches = re.findall(amount_pattern, line)
-                    if not amount_matches: continue
+                if text:
+                    raw_text += text + "\n"
                     
-                    raw_date = date_match.group(1)
-                    try:
-                        if len(raw_date) <= 5:
-                            parsed_date = datetime.strptime(f"{raw_date}/{datetime.now().year}", "%d/%m/%Y")
-                        elif len(raw_date) <= 8:
-                            parsed_date = datetime.strptime(raw_date, "%d/%m/%y")
-                        else:
-                            parsed_date = datetime.strptime(raw_date, "%d/%m/%Y")
-                        parsed_date = parsed_date.replace(tzinfo=timezone.utc)
-                    except: continue
+        if not raw_text.strip():
+            raise HTTPException(status_code=400, detail="Impossible d'extraire du texte de ce PDF.")
 
-                    raw_amount = amount_matches[-1].replace(' ', '').replace(',', '.')
-                    amount = float(raw_amount)
-                    t_type = "Revenu" if amount > 0 else "Dépense"
-                    description = line.replace(raw_date, '').replace(amount_matches[-1], '').strip()
-                    
-                    extracted_transactions.append({
-                        "date": parsed_date.isoformat(),
-                        "amount": abs(amount),
-                        "type": t_type,
-                        "description": description or "Transaction PDF",
-                        "category_id": None,
-                        "subcategory_id": None
-                    })
+        # Le Prompt Strict
+        prompt = f"""
+        Tu es un expert comptable spécialisé dans l'extraction de données financières.
+        Analyse le texte brut de ce relevé bancaire et extrais UNIQUEMENT les transactions bancaires.
+        Ignore le texte informatif, les soldes de début/fin, et les publicités.
+        
+        Renvoie les données STRICTEMENT sous la forme d'un tableau JSON valide, sans aucun texte avant ou après. 
+        Ne mets PAS de balise Markdown (comme ```json).
+        
+        Chaque objet JSON doit avoir la structure suivante :
+        [
+          {{
+            "date": "YYYY-MM-DD",
+            "amount": 12.50,
+            "type": "Dépense",
+            "description": "Nom propre du marchand"
+          }}
+        ]
+        
+        Règles :
+        - 'amount' DOIT être un nombre positif.
+        - Si la ligne est un crédit ou revenu, 'type' est "Revenu", sinon c'est "Dépense".
+        
+        TEXTE À ANALYSER :
+        {raw_text}
+        """
+
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        response = model.generate_content(prompt)
+        
+        response_text = response.text.strip()
+        
+        # Nettoyage au cas où Gemini rajoute le block markdown malgré les consignes
+        if response_text.startswith("```json"):
+            response_text = response_text[7:]
+        if response_text.startswith("```"):
+            response_text = response_text[3:]
+        if response_text.endswith("```"):
+            response_text = response_text[:-3]
+            
+        response_text = response_text.strip()
+        
+        try:
+            transactions = json.loads(response_text)
+        except json.JSONDecodeError:
+            logger.error(f"Echec du parsing JSON retourné par Gemini : {response_text}")
+            raise HTTPException(status_code=500, detail="L'intelligence artificielle n'a pas pu formatter correctement les données.")
+
+        # Re-formattage sécurisé pour le frontend
+        extracted_transactions = []
+        for t in transactions:
+            extracted_transactions.append({
+                "date": t.get("date", datetime.now().strftime("%Y-%m-%d")),
+                "amount": abs(float(t.get("amount", 0))),
+                "type": t.get("type", "Dépense"),
+                "description": t.get("description", "Transaction PDF"),
+                "category_id": None,
+                "subcategory_id": None
+            })
 
         return extracted_transactions
+
+    except HTTPException as he:
+        raise he
     except Exception as e:
         logger.error(f"Erreur lors de l'analyse PDF : {e}")
         raise HTTPException(status_code=500, detail=f"Échec de l'analyse du PDF : {str(e)}")
@@ -1146,7 +1187,6 @@ async def delete_recurring_transaction(recurring_id: str, current_user: UserInDB
 
 @app.post("/api/recurring-transactions/generate")
 async def generate_recurring_transactions(current_user: UserInDB = Depends(get_current_user)):
-    """Route API manuelle pour générer les abonnements (L'utilisateur peut toujours cliquer)."""
     count = await internal_generate_recurring(current_user.id)
     return {"message": f"{count} transactions générées", "count": count}
 
