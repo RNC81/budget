@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 // 1. Ajout de l'icône 'Target'
-import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload, Shield, PiggyBank, Target } from 'lucide-react';
+import { Settings as SettingsIcon, Tag, FolderTree, Repeat, Upload, Shield, PiggyBank, Target, Webhook } from 'lucide-react';
 import CategoriesTab from '../components/settings/CategoriesTab';
 import SubCategoriesTab from '../components/settings/SubCategoriesTab';
 import RecurringTransactionsTab from '../components/settings/RecurringTransactionsTab';
