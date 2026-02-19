@@ -1,21 +1,20 @@
 import React, { useState, useEffect } from 'react';
-// 1. Import de 'Link' pour le lien vers les paramètres
 import { Link } from 'react-router-dom';
-// 2. Import de l'API (avec la nouvelle fonction getMonthlyReview)
-import api, { getMonthlyReview } from '../api';
-// --- AJOUT DEVISE : Import de useAuth ---
+import api, { 
+  getMonthlyReview, 
+  getPendingTransactions, 
+  resolvePendingTransaction, 
+  deletePendingTransaction 
+} from '../api';
 import { useAuth } from '../App'; 
-// --- FIN AJOUT DEVISE ---
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell 
 } from 'recharts';
-// --- AJOUT IDÉE 4 : Ajout de Award et AlertTriangle ---
 import { 
   TrendingUp, TrendingDown, Wallet, Plus, Loader, PiggyBank, Calendar, Filter,
-  CalendarClock, Repeat, Target, Award, AlertTriangle
+  Repeat, Target, Award, AlertTriangle, Inbox, Check, Trash2
 } from 'lucide-react';
-// --- FIN AJOUT IDÉE 4 ---
 import TransactionModal from '../components/TransactionModal';
 
 import DatePicker, { registerLocale } from 'react-datepicker';
@@ -32,7 +31,7 @@ const COLORS = [
 ];
 
 /**
- * Fonctions d'initialisation (identiques)
+ * Fonctions d'initialisation
  */
 const getInitialStartDate = () => {
   const savedDate = localStorage.getItem('dashboardStartDate');
@@ -50,19 +49,26 @@ const getInitialEndDate = () => {
   return new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
 };
 
-
 function Dashboard() {
-  // --- AJOUT DEVISE : Récupération de l'utilisateur depuis le contexte ---
   const { user } = useAuth();
-  // --- FIN AJOUT DEVISE ---
 
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   
-  // --- AJOUT IDÉE 4 : State pour la revue mensuelle ---
   const [monthlyReviewData, setMonthlyReviewData] = useState(null);
   const [loadingReview, setLoadingReview] = useState(true);
-  // --- FIN AJOUT IDÉE 4 ---
+
+  // --- NOUVEAU : STATES POUR L'INBOX ---
+  const [pendingTransactions, setPendingTransactions] = useState([]);
+  const [loadingPending, setLoadingPending] = useState(true);
+  const [categories, setCategories] = useState([]);
+  const [subCategories, setSubCategories] = useState([]);
+  const [resolvingIds, setResolvingIds] = useState(new Set()); // Pour gérer les loaders par ligne
+  
+  // State pour stocker les sélections de catégorie/sous-catégorie pour chaque pending transaction
+  // Format: { [pendingId]: { categoryId: '', subcategoryId: '' } }
+  const [pendingSelections, setPendingSelections] = useState({});
+  // --- FIN NOUVEAU ---
 
   const [showModal, setShowModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -75,46 +81,49 @@ function Dashboard() {
   const [formStartDate, setFormStartDate] = useState(appliedParams.start);
   const [formEndDate, setFormEndDate] = useState(appliedParams.end);
   
-  // --- AJOUT DEVISE : Nouvelle fonction de formatage dynamique ---
   const formatCurrency = (amount) => {
     const safeAmount = typeof amount === 'number' ? amount : 0;
-    const currencyCode = user?.currency || 'EUR'; // EUR par défaut
+    const currencyCode = user?.currency || 'EUR';
     
     return new Intl.NumberFormat('fr-FR', { 
       style: 'currency', 
       currency: currencyCode 
     }).format(safeAmount);
   };
-  // --- FIN AJOUT DEVISE ---
   
-  // useEffect pour les stats principales (basées sur le filtre)
+  // Fetch stats principales
   useEffect(() => {
     fetchStats();
+    fetchPendingTransactions(); // Rafraichit l'inbox quand on modifie les données
   }, [refreshKey, appliedParams]); 
 
-  // --- AJOUT IDÉE 4 : useEffect pour la revue (exécuté une seule fois) ---
+  // Initial fetch (Revue, Catégories pour l'Inbox)
   useEffect(() => {
-    const fetchMonthlyReview = async () => {
+    const fetchInitialData = async () => {
       setLoadingReview(true);
       try {
-        // Appelle sans params pour avoir le mois précédent par défaut
-        const response = await getMonthlyReview(); 
-        setMonthlyReviewData(response.data);
+        const reviewRes = await getMonthlyReview(); 
+        setMonthlyReviewData(reviewRes.data);
+
+        // Récupérer les catégories pour les selects de l'Inbox
+        const catsRes = await api.get('/api/categories');
+        const subCatsRes = await api.get('/api/subcategories');
+        setCategories(catsRes.data);
+        setSubCategories(subCatsRes.data);
+
       } catch (error) {
-        console.error('Error fetching monthly review:', error);
+        console.error('Error fetching initial data:', error);
       } finally {
         setLoadingReview(false);
       }
     };
 
-    fetchMonthlyReview();
-  }, []); // [] = Exécuter une seule fois au montage
-  // --- FIN AJOUT IDÉE 4 ---
+    fetchInitialData();
+  }, []);
 
 
   const fetchStats = async () => {
     setLoading(true);
-    
     if (!appliedParams.start || !appliedParams.end) {
       setLoading(false);
       return;
@@ -125,7 +134,6 @@ function Dashboard() {
         start_date_str: format(appliedParams.start, 'yyyy-MM-dd'),
         end_date_str: format(appliedParams.end, 'yyyy-MM-dd')
       };
-      
       const response = await api.get('/api/dashboard/stats', { params: params });
       setStats(response.data);
     } catch (error) {
@@ -134,6 +142,93 @@ function Dashboard() {
       setLoading(false);
     }
   };
+
+  // --- NOUVELLES FONCTIONS POUR L'INBOX ---
+  const fetchPendingTransactions = async () => {
+    setLoadingPending(true);
+    try {
+      const res = await getPendingTransactions();
+      setPendingTransactions(res.data);
+      
+      // Initialiser le state des sélections si vide pour les nouvelles entrées
+      const newSelections = { ...pendingSelections };
+      res.data.forEach(t => {
+        if (!newSelections[t.id]) {
+          newSelections[t.id] = { categoryId: '', subcategoryId: '' };
+        }
+      });
+      setPendingSelections(newSelections);
+
+    } catch (err) {
+      console.error('Error fetching pending transactions', err);
+    } finally {
+      setLoadingPending(false);
+    }
+  };
+
+  const handlePendingSelectionChange = (id, field, value) => {
+    setPendingSelections(prev => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        [field]: value,
+        // Si on change la catégorie, on reset la sous-catégorie
+        ...(field === 'categoryId' ? { subcategoryId: '' } : {})
+      }
+    }));
+  };
+
+  const handleResolvePending = async (pendingTx) => {
+    const selection = pendingSelections[pendingTx.id];
+    
+    // Validation basique : forcer le choix d'une catégorie au minimum
+    if (!selection || !selection.categoryId) {
+      alert("Veuillez sélectionner une catégorie pour valider la transaction.");
+      return;
+    }
+
+    setResolvingIds(prev => new Set(prev).add(pendingTx.id));
+
+    try {
+      await resolvePendingTransaction(pendingTx.id, {
+        type: "Dépense", // Apple pay est généralement une dépense
+        category_id: selection.categoryId,
+        subcategory_id: selection.subcategoryId || null,
+        description: pendingTx.merchant // Utilise le marchand comme description
+      });
+      
+      // Rafraichir le dashboard entier
+      setRefreshKey(prev => prev + 1);
+    } catch (err) {
+      console.error('Failed to resolve transaction', err);
+      alert('Erreur lors de la validation.');
+    } finally {
+      setResolvingIds(prev => {
+        const next = new Set(prev);
+        next.delete(pendingTx.id);
+        return next;
+      });
+    }
+  };
+
+  const handleRejectPending = async (id) => {
+    if(window.confirm("Êtes-vous sûr de vouloir ignorer cette transaction en attente ?")) {
+      setResolvingIds(prev => new Set(prev).add(id));
+      try {
+        await deletePendingTransaction(id);
+        fetchPendingTransactions(); // Rafraichit juste l'inbox
+      } catch (err) {
+        console.error('Failed to delete pending transaction', err);
+      } finally {
+        setResolvingIds(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    }
+  };
+  // --- FIN FONCTIONS INBOX ---
 
   const handleApplyFilter = () => {
     localStorage.setItem('dashboardStartDate', formStartDate.toISOString());
@@ -149,7 +244,7 @@ function Dashboard() {
     setShowModal(false);
   };
 
-  if (loading) {
+  if (loading && !stats) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader className="h-8 w-8 animate-spin text-primary-600" />
@@ -165,20 +260,17 @@ function Dashboard() {
   const displayYear = appliedParams.start ? appliedParams.start.getFullYear() : new Date().getFullYear();
 
   const budgets = stats?.budget_progress;
-
-  // --- AJOUT PRÉVISIONS : Récupération des données ---
   const forecast = stats?.estimated_end_of_month_balance;
   const upcomingList = stats?.upcoming_transactions_list;
   const currentGlobalBalance = stats?.global_epargne_totale;
-  // --- FIN AJOUT PRÉVISIONS ---
-
-  // --- AJOUT OBJECTIFS : Récupération des données ---
   const savingsGoals = stats?.savings_goals_progress;
-  // --- FIN AJOUT OBJECTIFS ---
+
+  // Filtrer les catégories pour n'afficher que les dépenses dans l'Inbox Apple Pay
+  const expenseCategories = categories.filter(c => c.type === 'Dépense');
 
   return (
     <div className="space-y-8">
-      {/* Header (Identique) */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Tableau de Bord</h1>
@@ -195,11 +287,93 @@ function Dashboard() {
         </button>
       </div>
 
-      {/* Filtres (Identique) */}
+      {/* --- NOUVEAU BLOC : INBOX TRANSACTIONS EN ATTENTE --- */}
+      {pendingTransactions.length > 0 && (
+        <div className="bg-yellow-50 border-2 border-yellow-200 rounded-2xl shadow-md p-6">
+          <div className="flex items-center space-x-3 mb-4 text-yellow-800">
+            <Inbox className="h-6 w-6" />
+            <h2 className="text-lg font-bold">À Classer ({pendingTransactions.length})</h2>
+          </div>
+          <p className="text-sm text-yellow-700 mb-4">Ces transactions ont été reçues automatiquement (ex: Apple Pay). Sélectionnez une catégorie pour les ajouter à votre budget.</p>
+          
+          <div className="space-y-3">
+            {pendingTransactions.map(tx => {
+              const isResolving = resolvingIds.has(tx.id);
+              const selection = pendingSelections[tx.id] || { categoryId: '', subcategoryId: '' };
+              const availableSubCats = subCategories.filter(sub => sub.category_id === selection.categoryId);
+
+              return (
+                <div key={tx.id} className="bg-white rounded-xl p-4 border border-yellow-300 flex flex-col md:flex-row items-center gap-4 shadow-sm">
+                  {/* Info Transaction */}
+                  <div className="flex-1 w-full flex items-center justify-between md:justify-start md:space-x-4">
+                    <div>
+                      <p className="font-semibold text-gray-900">{tx.merchant}</p>
+                      <p className="text-xs text-gray-500">{format(new Date(tx.date), 'dd MMM yyyy HH:mm', { locale: fr })}</p>
+                    </div>
+                    <span className="font-bold text-red-600 ml-auto md:ml-0">
+                      -{formatCurrency(tx.amount)}
+                    </span>
+                  </div>
+
+                  {/* Formulaire de sélection */}
+                  <div className="flex flex-col sm:flex-row w-full md:w-auto gap-2">
+                    <select
+                      className="border border-gray-300 rounded-lg p-2 text-sm text-gray-700 focus:ring-primary-500 focus:border-primary-500"
+                      value={selection.categoryId}
+                      onChange={(e) => handlePendingSelectionChange(tx.id, 'categoryId', e.target.value)}
+                      disabled={isResolving}
+                    >
+                      <option value="">Sélectionner catégorie...</option>
+                      {expenseCategories.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      className="border border-gray-300 rounded-lg p-2 text-sm text-gray-700 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50"
+                      value={selection.subcategoryId}
+                      onChange={(e) => handlePendingSelectionChange(tx.id, 'subcategoryId', e.target.value)}
+                      disabled={!selection.categoryId || isResolving}
+                    >
+                      <option value="">Sous-catégorie (Optionnel)</option>
+                      {availableSubCats.map(sub => (
+                        <option key={sub.id} value={sub.id}>{sub.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex space-x-2 w-full md:w-auto justify-end">
+                    <button
+                      onClick={() => handleResolvePending(tx)}
+                      disabled={isResolving || !selection.categoryId}
+                      className="p-2 bg-success-100 text-success-600 hover:bg-success-200 border border-success-200 rounded-lg transition-colors disabled:opacity-50 flex items-center"
+                      title="Valider la transaction"
+                    >
+                      {isResolving ? <Loader className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" />}
+                    </button>
+                    <button
+                      onClick={() => handleRejectPending(tx.id)}
+                      disabled={isResolving}
+                      className="p-2 bg-red-50 text-red-500 hover:bg-red-100 border border-red-200 rounded-lg transition-colors disabled:opacity-50 flex items-center"
+                      title="Ignorer et supprimer"
+                    >
+                      <Trash2 className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {/* --- FIN BLOC INBOX --- */}
+
+
+      {/* Filtres */}
       <div className="bg-white rounded-2xl shadow-lg p-4 border border-gray-100">
         <div className="flex flex-col sm:flex-row gap-4 items-end">
           
-          {/* Sélecteur Date de Début */}
           <div className="flex-1 min-w-[150px]">
             <label htmlFor="start-date" className="block text-sm font-medium text-gray-700 mb-1">Date de début</label>
             <div className="relative">
@@ -218,7 +392,6 @@ function Dashboard() {
             </div>
           </div>
           
-          {/* Sélecteur Date de Fin */}
           <div className="flex-1 min-w-[150px]">
             <label htmlFor="end-date" className="block text-sm font-medium text-gray-700 mb-1">Date de fin</label>
             <div className="relative">
@@ -238,7 +411,6 @@ function Dashboard() {
             </div>
           </div>
           
-          {/* Bouton "Appliquer" */}
           <div className="flex-shrink-0 w-full sm:w-auto">
             <button
               onClick={handleApplyFilter}
@@ -253,9 +425,8 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* --- Stats Cards (MISE À JOUR AVEC formatCurrency) --- */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Revenus */}
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow">
           <div className="flex items-center justify-between">
             <div>
@@ -270,7 +441,6 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Dépenses */}
         <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow">
           <div className="flex items-center justify-between">
             <div>
@@ -285,7 +455,6 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Épargne (Période) */}
         <div className={`bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition-shadow ${
           epargnePositive ? 'ring-2 ring-success-200' : 'ring-2 ring-red-200'
         }`}>
@@ -305,7 +474,6 @@ function Dashboard() {
           </p>
         </div>
 
-        {/* ÉPARGNE GLOBALE */}
         <div className={`bg-white rounded-2xl shadow-lg p-6 border-2 ${
           globalEpargnePositive ? 'border-primary-300' : 'border-red-300'
         } hover:shadow-xl transition-shadow`}>
@@ -325,12 +493,9 @@ function Dashboard() {
           </p>
         </div>
       </div>
-      {/* --- FIN DES STATS CARDS --- */}
 
 
-      {/* ---
-          NOUVEAU BLOC : REVUE MENSUELLE (IDÉE 4)
-      --- */}
+      {/* REVUE MENSUELLE */}
       <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
         <h2 className="text-xl font-bold text-gray-900 mb-6">
           Revue du Mois Précédent
@@ -352,24 +517,19 @@ function Dashboard() {
           </div>
         ) : (
           <div className="space-y-6">
-            
-            {/* Stats Clés de la Revue */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Total Épargné */}
               <div className="bg-gray-50 p-4 rounded-lg text-center">
                 <p className="text-sm font-medium text-gray-600">Épargné ce mois-là</p>
                 <p className={`text-2xl font-bold ${monthlyReviewData.total_saved >= 0 ? 'text-success-600' : 'text-red-600'}`}>
                   {formatCurrency(monthlyReviewData.total_saved)}
                 </p>
               </div>
-              {/* Taux d'épargne */}
               <div className="bg-gray-50 p-4 rounded-lg text-center">
                 <p className="text-sm font-medium text-gray-600">Taux d'épargne</p>
                 <p className={`text-2xl font-bold ${monthlyReviewData.savings_rate >= 10 ? 'text-success-600' : (monthlyReviewData.savings_rate > 0 ? 'text-yellow-600' : 'text-red-600')}`}>
                   {monthlyReviewData.savings_rate.toFixed(1)}%
                 </p>
               </div>
-              {/* Plus Grosse Dépense */}
               <div className="bg-gray-50 p-4 rounded-lg text-center">
                 <p className="text-sm font-medium text-gray-600">Plus grosse dépense</p>
                 <p className="text-2xl font-bold text-red-600">
@@ -381,10 +541,7 @@ function Dashboard() {
               </div>
             </div>
 
-            {/* Analyse des Budgets */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Budgets Respectés */}
               <div>
                 <h3 className="text-lg font-semibold text-success-700 mb-3 flex items-center">
                   <Award className="h-5 w-5 mr-2" />
@@ -406,7 +563,6 @@ function Dashboard() {
                 )}
               </div>
 
-              {/* Budgets Dépassés */}
               <div>
                 <h3 className="text-lg font-semibold text-red-700 mb-3 flex items-center">
                   <AlertTriangle className="h-5 w-5 mr-2" />
@@ -427,22 +583,16 @@ function Dashboard() {
                   <p className="text-sm text-gray-500 italic">Félicitations ! Aucun budget dépassé.</p>
                 )}
               </div>
-
             </div>
           </div>
         )}
       </div>
-      {/* --- FIN DU BLOC REVUE MENSUELLE --- */}
 
-
-      {/* ---
-        BLOC PRÉVISIONS (Identique)
-      --- */}
+      {/* PRÉVISIONS */}
       <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Prévisions pour la fin du mois</h2>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          
           <div className="space-y-4">
             <div>
               <p className="text-sm font-medium text-gray-600">Solde global actuel</p>
@@ -498,15 +648,10 @@ function Dashboard() {
               </div>
             )}
           </div>
-
         </div>
       </div>
-      {/* --- FIN DU BLOC PRÉVISIONS --- */}
 
-
-      {/* ---
-        BLOC BUDGETS (Identique)
-      --- */}
+      {/* BUDGETS */}
       <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Suivi des Budgets ({displayPeriod})</h2>
         
@@ -518,11 +663,11 @@ function Dashboard() {
               const rawPercentage = (amount > 0) ? (spent / amount) * 100 : 0;
               const clampedPercentage = Math.min(rawPercentage, 100);
 
-              let barColor = 'bg-success-600'; // Vert
+              let barColor = 'bg-success-600'; 
               if (rawPercentage > 95) {
-                barColor = 'bg-red-600'; // Rouge
+                barColor = 'bg-red-600'; 
               } else if (rawPercentage > 75) {
-                barColor = 'bg-yellow-500'; // Orange/Jaune
+                barColor = 'bg-yellow-500'; 
               }
 
               return (
@@ -561,19 +706,14 @@ function Dashboard() {
           </div>
         )}
       </div>
-      {/* --- FIN DU BLOC BUDGETS --- */}
 
-
-      {/* ---
-        NOUVEAU BLOC : OBJECTIFS D'ÉPARGNE
-      --- */}
+      {/* OBJECTIFS D'ÉPARGNE */}
       <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Objectifs d'Épargne (Global)</h2>
         
         {savingsGoals && savingsGoals.length > 0 ? (
           <div className="space-y-6">
             {savingsGoals.map((goal) => {
-              // Calcul des pourcentages
               const current = goal.current_amount;
               const target = goal.target_amount;
               const percentage = (target > 0) ? (current / target) * 100 : 0;
@@ -581,21 +721,18 @@ function Dashboard() {
 
               return (
                 <div key={goal.id}>
-                  {/* Légende (Nom et montants) */}
                   <div className="flex justify-between items-baseline mb-1">
                     <span className="font-semibold text-gray-800">{goal.name}</span>
                     <span className="text-sm font-medium text-gray-600">
                       {formatCurrency(current)} / {formatCurrency(target)}
                     </span>
                   </div>
-                  {/* Barre de progression */}
                   <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
                     <div
-                      className="h-4 rounded-full bg-yellow-500 transition-all duration-500" // Couleur Or pour les objectifs
+                      className="h-4 rounded-full bg-yellow-500 transition-all duration-500" 
                       style={{ width: `${clampedPercentage}%` }}
                     ></div>
                   </div>
-                  {/* Indicateur de pourcentage */}
                   <p className="text-right text-sm font-semibold text-gray-500 mt-1">
                     {percentage.toFixed(0)}% atteint
                   </p>
@@ -604,7 +741,6 @@ function Dashboard() {
             })}
           </div>
         ) : (
-          // --- Placeholder s'il n'y a pas d'objectifs ---
           <div className="text-center text-gray-500 py-6 border-2 border-dashed border-gray-200 rounded-lg">
             <Target className="h-12 w-12 mx-auto text-gray-400 mb-2" />
             <p className="font-medium">Aucun objectif d'épargne défini.</p>
@@ -617,13 +753,9 @@ function Dashboard() {
           </div>
         )}
       </div>
-      {/* --- FIN DU BLOC OBJECTIFS D'ÉPARGNE --- */}
 
-
-      {/* --- Conteneur pour les graphiques (Identique) --- */}
+      {/* GRAPHIQUES */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        
-        {/* Graphique Barres */}
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Revenus vs Dépenses ({displayYear})</h2>
           <div className="h-96">
@@ -649,7 +781,6 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Graphique Camembert */}
         <div className="bg-white rounded-2xl shadow-lg p-8 border border-gray-100">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Répartition des Dépenses ({displayPeriod})</h2>
           <div className="h-96">
@@ -670,10 +801,7 @@ function Dashboard() {
                     ))}
                   </Pie>
                   <Tooltip
-                    // --- CORRECTION TOOLTIP ---
-                    // "value" est le montant, "name" est le nom de la catégorie
                     formatter={(value, name) => [formatCurrency(value), name]}
-                    // --- FIN CORRECTION ---
                   />
                   <Legend />
                 </PieChart>
@@ -685,10 +813,8 @@ function Dashboard() {
             )}
           </div>
         </div>
-
       </div>
 
-      {/* Transaction Modal (Identique) */}
       {showModal && (
         <TransactionModal
           onClose={() => setShowModal(false)}
