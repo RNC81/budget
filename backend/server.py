@@ -1,11 +1,11 @@
+FILE: backend/server.py
 from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Any
-# --- CORRECTION 1 : AJOUT DE L'IMPORT 'date' ET 'logging' ---
 from datetime import datetime, timezone, timedelta, date
 import os
 import uuid
@@ -14,6 +14,7 @@ import io
 import logging
 import pdfplumber
 import json
+import secrets
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from bson import ObjectId
@@ -23,7 +24,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-# --- IMPORTS POUR SENDGRID ---
+# --- IMPORTS POUR SENDGRID / RESEND ---
 import resend
 
 # --- NOUVEAUX IMPORTS POUR MFA (TOTP) ---
@@ -84,9 +85,10 @@ PASSWORD_RESET_TOKEN_EXPIRE_MINUTES = 15
 
 # Schéma OAuth2 pour la récupération du token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+# Schéma HTTPBearer pour l'API Key (Apple Pay Webhook)
+bearer_scheme = HTTPBearer(auto_error=False)
 
 # --- Initialisation de FastAPI ---
-# On injecte ici notre UnifiedJSONResponse pour tout le serveur
 app = FastAPI(default_response_class=UnifiedJSONResponse)
 
 # Configuration du Rate Limiter dans l'état de l'application
@@ -121,6 +123,7 @@ subcategories_collection = db.subcategories
 recurring_transactions_collection = db.recurring_transactions
 budgets_collection = db.budgets
 savings_goals_collection = db.savings_goals
+pending_transactions_collection = db.pending_transactions # NOUVELLE COLLECTION
 
 # --- NOUVEAUTÉ : INITIALISATION DES INDEX (PERFORMANCE) ---
 @app.on_event("startup")
@@ -130,6 +133,7 @@ async def startup_db_client():
     await categories_collection.create_index([("user_id", 1)])
     await budgets_collection.create_index([("user_id", 1), ("category_id", 1)], unique=True)
     await savings_goals_collection.create_index([("user_id", 1)])
+    await pending_transactions_collection.create_index([("user_id", 1)])
     print("Index MongoDB synchronisés.")
 
 # --- Modèles Pydantic ---
@@ -145,11 +149,13 @@ class UserPublic(BaseModel):
     email: EmailStr
     mfa_enabled: bool = False
     currency: str = "EUR"
+    has_api_key: bool = False # NOUVEAU: Permet au frontend de savoir si une clé existe
 
 class UserInDB(UserPublic):
     hashed_password: str
     is_verified: Optional[bool] = None
     mfa_secret: Optional[str] = None
+    api_key: Optional[str] = None # NOUVEAU: Stockage du Personal Access Token
 
 class TokenResponse(BaseModel):
     access_token: Optional[str] = None
@@ -330,6 +336,26 @@ class PasswordChangeRequest(BaseModel):
 class CurrencyUpdateRequest(BaseModel):
     currency: str
 
+# NOUVEAUX MODÈLES (INBOX & WEBHOOKS)
+class WebhookPayload(BaseModel):
+    amount: float
+    merchant: str
+    date: datetime
+
+class PendingTransactionResponse(BaseModel):
+    id: str
+    amount: float
+    merchant: str
+    date: datetime
+    created_at: datetime
+
+class ResolvePendingRequest(BaseModel):
+    type: str # "Revenu" ou "Dépense"
+    category_id: Optional[str] = None
+    subcategory_id: Optional[str] = None
+    description: Optional[str] = None
+
+
 # --- Utilitaires de Sécurité ---
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -417,20 +443,17 @@ def generate_qr_code_data_uri(email: str, secret_key: str) -> str:
     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
     return f"data:image/png;base64,{img_str}"
 
-# --- Fonctions d'envoi d'e-mail (MIGRATION RESEND) ---
+# --- Fonctions d'envoi d'e-mail (RESEND) ---
 def send_verification_email(email: str, token: str):
     frontend_url = os.getenv("FRONTEND_URL")
     sender_email = os.getenv("SENDER_EMAIL")
-    # On utilise maintenant RESEND_API_KEY
     resend_api_key = os.getenv("RESEND_API_KEY")
 
     if not all([frontend_url, sender_email, resend_api_key]):
         logger.error("CONFIG RESEND MANQUANTE : Vérifiez FRONTEND_URL, SENDER_EMAIL, RESEND_API_KEY")
         raise HTTPException(status_code=500, detail="Email service is not configured.")
 
-    # Configuration de la clé API Resend
     resend.api_key = resend_api_key
-
     verification_link = f"{frontend_url}/verify-email?token={token}"
     
     html_content = f"""
@@ -503,17 +526,15 @@ def send_password_reset_email(email: str, token: str):
         logger.error(f"Erreur critique lors de l'envoi de l'e-mail de réinitialisation: {e}")
         raise HTTPException(status_code=500, detail="Failed to send password reset email.")
 
-# --- Fonctions de l'Utilisateur ---
+# --- Fonctions de l'Utilisateur & Auth ---
 
 async def get_user(email: str) -> Optional[UserInDB]:
     user = await users_collection.find_one({"email": email})
     if user:
         if "currency" not in user:
             user["currency"] = "EUR"
-        # --- CORRECTION CRITIQUE : ON NE TOUCHE PAS A L'ID ---
-        # Le code original fonctionnait car UserInDB(**user) mappe automatiquement
-        # le champ "id" (string UUID) stocké en base, et ignore "_id" sauf config contraire.
-        # En forçant str(user["_id"]), on cassait la liaison avec les transactions.
+        # NOUVEAU: Informe le client si une clé API existe déjà
+        user["has_api_key"] = "api_key" in user and user["api_key"] is not None
         return UserInDB(**user)
     return None
 
@@ -535,6 +556,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
     user = await get_user(token_data.email)
     if user is None: raise credentials_exception
     return user
+
+async def get_user_by_api_key(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> UserInDB:
+    """Authentification spécifique pour le webhook (Machine to Machine via API Key)"""
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="API Key missing")
+        
+    token = credentials.credentials
+    user = await users_collection.find_one({"api_key": token})
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+        
+    user["has_api_key"] = True
+    return UserInDB(**user)
 
 # --- Gestion des Catégories par Défaut ---
 
@@ -570,14 +605,8 @@ async def internal_generate_recurring(user_id: str):
     generated_count = 0
     
     for recurring in recurring_list:
-        # On vérifie si on est au jour ou après le jour de l'abonnement
         if recurring["frequency"] == "Mensuel" and current_day >= recurring["day_of_month"]:
-            
-            # LOGIQUE SMART : On cherche si une transaction similaire existe déjà ce mois-ci
-            # Similaire = Même catégorie ET (Montant proche OU Description qui se ressemble)
             start_of_month = datetime(current_year, current_month, 1, tzinfo=timezone.utc)
-            
-            # Recherche souple dans MongoDB
             existing = await transactions_collection.find_one({
                 "user_id": user_id,
                 "category_id": recurring.get("category_id"),
@@ -621,7 +650,8 @@ async def register_user(request: Request, user: UserCreate):
         "is_verified": is_first_user,
         "mfa_enabled": False, 
         "mfa_secret": None,
-        "currency": "EUR"
+        "currency": "EUR",
+        "api_key": None
     }
     
     if is_first_user:
@@ -663,7 +693,6 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
             detail="Email not verified.",
         )
     
-    # AUTOMATISATION : Déclenchement de la génération des abonnements à la connexion
     if not user.mfa_enabled:
         await internal_generate_recurring(user.id)
 
@@ -689,9 +718,7 @@ async def mfa_login(request: Request, mfa_data: MfaLoginRequest):
     if not verify_mfa_code(user.mfa_secret, mfa_data.mfa_code):
         raise HTTPException(status_code=401, detail="Invalid MFA code.")
         
-    # AUTOMATISATION : Déclenchement de la génération des abonnements après MFA réussi
     await internal_generate_recurring(user.id)
-
     access_token = create_access_token(data={"sub": user.email, "scope": "access"})
     return Token(access_token=access_token, token_type="bearer")
 
@@ -748,6 +775,24 @@ async def update_user_currency(currency_data: CurrencyUpdateRequest, current_use
     await users_collection.update_one({"id": current_user.id}, {"$set": {"currency": new_currency}})
     return {"message": "Currency updated successfully", "currency": new_currency}
 
+# --- NOUVEAU : GESTION API KEY POUR IPHONE ---
+@app.post("/api/users/me/api-key")
+async def generate_api_key(current_user: UserInDB = Depends(get_current_user)):
+    """Génère une clé API statique pour l'utilisateur (utile pour l'intégration Shortcuts)"""
+    new_key = "bt_" + secrets.token_hex(24) # Prefixe 'bt_' pour identifier la clé
+    await users_collection.update_one({"id": current_user.id}, {"$set": {"api_key": new_key}})
+    return {
+        "api_key": new_key, 
+        "message": "Enregistrez cette clé précieusement, elle ne sera plus affichée."
+    }
+
+@app.delete("/api/users/me/api-key")
+async def revoke_api_key(current_user: UserInDB = Depends(get_current_user)):
+    """Révoque la clé API existante"""
+    await users_collection.update_one({"id": current_user.id}, {"$set": {"api_key": None}})
+    return {"message": "API key révoquée avec succès."}
+
+
 # --- Routes MFA ---
 
 @app.get("/api/mfa/setup", response_model=MfaSetupResponse)
@@ -782,6 +827,72 @@ async def mfa_disable(mfa_data: MfaDisableRequest, current_user: UserInDB = Depe
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+# --- NOUVEAU : WEBHOOKS & INBOX (PENDING TRANSACTIONS) ---
+
+@app.post("/api/webhooks/apple-pay")
+async def webhook_apple_pay(payload: WebhookPayload, current_user: UserInDB = Depends(get_user_by_api_key)):
+    """Reçoit la transaction depuis iOS Shortcuts via API Key et la met en attente."""
+    pending_id = str(uuid.uuid4())
+    doc = {
+        "id": pending_id,
+        "user_id": current_user.id,
+        "amount": abs(payload.amount), # Securité sur le format
+        "merchant": payload.merchant,
+        "date": payload.date,
+        "created_at": datetime.now(timezone.utc)
+    }
+    await pending_transactions_collection.insert_one(doc)
+    return {"message": "Transaction logged as pending successfully.", "id": pending_id}
+
+@app.get("/api/transactions/pending", response_model=List[PendingTransactionResponse])
+async def get_pending_transactions(current_user: UserInDB = Depends(get_current_user)):
+    """Récupère la liste des transactions en attente de classification (Inbox)"""
+    pending = await pending_transactions_collection.find({"user_id": current_user.id}).sort("date", -1).to_list(None)
+    return [{
+        "id": p["id"],
+        "amount": p["amount"],
+        "merchant": p["merchant"],
+        "date": p["date"],
+        "created_at": p["created_at"]
+    } for p in pending]
+
+@app.post("/api/transactions/pending/{pending_id}/resolve")
+async def resolve_pending_transaction(pending_id: str, payload: ResolvePendingRequest, current_user: UserInDB = Depends(get_current_user)):
+    """Valide une transaction en attente et l'insère dans le vrai registre."""
+    pending = await pending_transactions_collection.find_one({"id": pending_id, "user_id": current_user.id})
+    if not pending: 
+        raise HTTPException(status_code=404, detail="Pending transaction not found")
+
+    transaction_id = str(uuid.uuid4())
+    # Par défaut, on utilise le nom du marchand comme description si non fournie
+    final_desc = payload.description if payload.description else pending["merchant"]
+    
+    new_tx = {
+        "id": transaction_id,
+        "user_id": current_user.id,
+        "date": pending["date"],
+        "amount": pending["amount"],
+        "type": payload.type,
+        "description": final_desc,
+        "category_id": payload.category_id,
+        "subcategory_id": payload.subcategory_id,
+        "created_at": datetime.now(timezone.utc)
+    }
+    
+    await transactions_collection.insert_one(new_tx)
+    # Suppression de la file d'attente
+    await pending_transactions_collection.delete_one({"id": pending_id})
+    
+    return {"message": "Pending transaction resolved and inserted.", "transaction_id": transaction_id}
+
+@app.delete("/api/transactions/pending/{pending_id}")
+async def delete_pending_transaction(pending_id: str, current_user: UserInDB = Depends(get_current_user)):
+    """Supprime une transaction en attente (rejet de la part de l'utilisateur)"""
+    res = await pending_transactions_collection.delete_one({"id": pending_id, "user_id": current_user.id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pending transaction not found")
+    return {"message": "Pending transaction deleted."}
 
 # Category Routes
 @app.get("/api/categories")

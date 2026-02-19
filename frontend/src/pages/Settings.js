@@ -9,6 +9,7 @@ import SecurityTab from '../components/settings/SecurityTab';
 import BudgetsTab from '../components/settings/BudgetsTab';
 // 2. Import du nouveau composant
 import SavingsGoalsTab from '../components/settings/SavingsGoalsTab';
+import ApiTab from '../components/settings/ApiTab';
 
 function Settings() {
   const [activeTab, setActiveTab] = useState('categories');
@@ -21,7 +22,8 @@ function Settings() {
     { id: 'goals', name: 'Objectifs', icon: Target },
     { id: 'recurring', name: 'Transactions Récurrentes', icon: Repeat },
     { id: 'import', name: 'Importer', icon: Upload },
-    { id: 'security', name: 'Sécurité', icon: Shield }, 
+    { id: 'security', name: 'Sécurité', icon: Shield },
+    {id: 'api', name: 'Automatisations', icon: Webhook }, 
   ];
 
   return (
@@ -71,7 +73,8 @@ function Settings() {
           {activeTab === 'goals' && <SavingsGoalsTab />}
           {activeTab === 'recurring' && <RecurringTransactionsTab />}
           {activeTab === 'import' && <ImportTab />}
-          {activeTab === 'security' && <SecurityTab />} 
+          {activeTab === 'security' && <SecurityTab />}
+          {activeTab === 'api' && <ApiTab />} 
         </div>
       </div>
     </div>
