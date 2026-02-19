@@ -236,7 +236,6 @@ export const getMonthlyReview = async (month = null, year = null) => {
     params.append('year', year);
   }
 
-  // Si des paramètres existent, axios les ajoutera. Sinon, l'appel sera simple.
   return await api.get('/api/dashboard/monthly-review', { params: params });
 };
 // --- FIN NOUVEAUTÉ ---
@@ -269,7 +268,26 @@ export const bulkCreateTransactions = async (transactions) => {
   });
 };
 
-// --- FIN NOUVEAUTÉ ---
+// --- NOUVEAU : API Keys & Inbox Apple Pay ---
 
+export const generateApiKey = async () => {
+  return await api.post('/api/users/me/api-key');
+};
+
+export const revokeApiKey = async () => {
+  return await api.delete('/api/users/me/api-key');
+};
+
+export const getPendingTransactions = async () => {
+  return await api.get('/api/transactions/pending');
+};
+
+export const resolvePendingTransaction = async (pendingId, payload) => {
+  return await api.post(`/api/transactions/pending/${pendingId}/resolve`, payload);
+};
+
+export const deletePendingTransaction = async (pendingId) => {
+  return await api.delete(`/api/transactions/pending/${pendingId}`);
+};
 
 export default api;

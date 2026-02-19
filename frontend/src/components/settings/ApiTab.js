@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import api from '../../api';
+import { getCurrentUser, generateApiKey as apiGenerateKey, revokeApiKey as apiRevokeKey } from '../../api';
 import { Key, AlertTriangle, Copy, CheckCircle, Trash2, Smartphone } from 'lucide-react';
 
 function ApiTab() {
@@ -15,7 +15,7 @@ function ApiTab() {
 
   const fetchUserStatus = async () => {
     try {
-      const response = await api.get('/users/me');
+      const response = await getCurrentUser();
       setHasApiKey(response.data.has_api_key);
     } catch (err) {
       setError('Erreur lors de la récupération des données utilisateur.');
@@ -24,12 +24,12 @@ function ApiTab() {
     }
   };
 
-  const generateApiKey = async () => {
+  const handleGenerateApiKey = async () => {
     if (window.confirm('Générer une nouvelle clé API va remplacer l\'ancienne si elle existe. Continuer ?')) {
       try {
         setIsLoading(true);
         setError(null);
-        const response = await api.post('/users/me/api-key');
+        const response = await apiGenerateKey();
         setNewApiKey(response.data.api_key);
         setHasApiKey(true);
         setCopied(false);
@@ -41,12 +41,12 @@ function ApiTab() {
     }
   };
 
-  const revokeApiKey = async () => {
+  const handleRevokeApiKey = async () => {
     if (window.confirm('Voulez-vous vraiment révoquer cette clé ? Vos raccourcis iOS cesseront de fonctionner.')) {
       try {
         setIsLoading(true);
         setError(null);
-        await api.delete('/users/me/api-key');
+        await apiRevokeKey();
         setHasApiKey(false);
         setNewApiKey(null);
       } catch (err) {
@@ -130,7 +130,7 @@ function ApiTab() {
         <div>
           {hasApiKey ? (
             <button
-              onClick={revokeApiKey}
+              onClick={handleRevokeApiKey}
               disabled={isLoading}
               className="flex items-center px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 text-sm font-medium"
             >
@@ -139,7 +139,7 @@ function ApiTab() {
             </button>
           ) : (
             <button
-              onClick={generateApiKey}
+              onClick={handleGenerateApiKey}
               disabled={isLoading}
               className="flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 text-sm font-medium"
             >
