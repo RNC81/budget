@@ -1,6 +1,7 @@
+FILE: frontend/src/components/settings/ApiTab.js
 import React, { useState, useEffect } from 'react';
 import { getCurrentUser, generateApiKey as apiGenerateKey, revokeApiKey as apiRevokeKey } from '../../api';
-import { Key, AlertTriangle, Copy, CheckCircle, Trash2, Smartphone } from 'lucide-react';
+import { Key, AlertTriangle, Copy, CheckCircle, Trash2, Smartphone, RefreshCw } from 'lucide-react';
 
 function ApiTab() {
   const [hasApiKey, setHasApiKey] = useState(false);
@@ -18,6 +19,7 @@ function ApiTab() {
       const response = await getCurrentUser();
       setHasApiKey(response.data.has_api_key);
     } catch (err) {
+      console.error("Erreur fetchUserStatus:", err);
       setError('Erreur lors de la récupération des données utilisateur.');
     } finally {
       setIsLoading(false);
@@ -34,6 +36,7 @@ function ApiTab() {
         setHasApiKey(true);
         setCopied(false);
       } catch (err) {
+        console.error("Erreur handleGenerateApiKey:", err);
         setError('Erreur lors de la génération de la clé API.');
       } finally {
         setIsLoading(false);
@@ -50,7 +53,8 @@ function ApiTab() {
         setHasApiKey(false);
         setNewApiKey(null);
       } catch (err) {
-        setError('Erreur lors de la révocation de la clé API.');
+        console.error("Erreur handleRevokeApiKey:", err);
+        setError('Erreur lors de la révocation de la clé API. Regardez la console F12.');
       } finally {
         setIsLoading(false);
       }
@@ -59,7 +63,9 @@ function ApiTab() {
 
   const copyToClipboard = () => {
     if (newApiKey) {
-      navigator.clipboard.writeText(newApiKey);
+      // Nettoyage radical des espaces blancs invisibles avant la copie
+      const cleanKey = newApiKey.trim();
+      navigator.clipboard.writeText(cleanKey);
       setCopied(true);
       setTimeout(() => setCopied(false), 3000);
     }
@@ -98,7 +104,7 @@ function ApiTab() {
           </p>
           
           <div className="flex items-center space-x-2">
-            <code className="flex-1 block bg-yellow-100/50 p-3 rounded text-yellow-900 border border-yellow-300 break-all font-mono text-sm">
+            <code className="flex-1 block bg-yellow-100/50 p-3 rounded text-yellow-900 border border-yellow-300 break-all font-mono text-sm select-all">
               {newApiKey}
             </code>
             <button
@@ -112,9 +118,9 @@ function ApiTab() {
         </div>
       )}
 
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <div className={`p-3 rounded-full ${hasApiKey ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-400'}`}>
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center space-x-4 w-full sm:w-auto">
+          <div className={`p-3 rounded-full flex-shrink-0 ${hasApiKey ? 'bg-green-100 text-green-600' : 'bg-gray-200 text-gray-400'}`}>
             <Key className="h-6 w-6" />
           </div>
           <div>
@@ -127,16 +133,28 @@ function ApiTab() {
           </div>
         </div>
 
-        <div>
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
           {hasApiKey ? (
-            <button
-              onClick={handleRevokeApiKey}
-              disabled={isLoading}
-              className="flex items-center px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 text-sm font-medium"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Révoquer la clé
-            </button>
+            <>
+              {/* NOUVEAU BOUTON : Permet de forcer la génération sans révoquer d'abord */}
+              <button
+                onClick={handleGenerateApiKey}
+                disabled={isLoading}
+                className="flex items-center px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 text-sm font-medium shadow-sm"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Régénérer
+              </button>
+              
+              <button
+                onClick={handleRevokeApiKey}
+                disabled={isLoading}
+                className="flex items-center px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 text-sm font-medium"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Révoquer
+              </button>
+            </>
           ) : (
             <button
               onClick={handleGenerateApiKey}
